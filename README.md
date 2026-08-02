@@ -51,16 +51,23 @@ whether the deployment should proceed.**
 | `audience` | no       | API origin (scheme+host of `api-url`) | OIDC audience. Only override if your Clymist sets a custom `OIDC_AUDIENCE`. |
 | `sha`      | no       | `github.sha`                        | Commit SHA to deploy. |
 | `ref`      | no       | `github.ref`                        | Git ref being deployed. |
+| `wait`     | no       | `true`                              | Wait for the deployment to finish and **fail the step if it fails**. Set `false` to trigger-and-return. |
+| `timeout`  | no       | `900`                               | Max seconds to wait (when `wait: true`). |
 
 The `app-id` is not a secret — it's fine to hard-code or store as a repo variable.
 Authorization comes from the OIDC token: a workflow can only deploy an app whose
 connected repository matches the workflow's own repository.
 
+By default the action **waits for the build + rollout to finish** and turns the
+step red if the deployment fails — so your CI reflects the real deploy outcome.
+
 ## Outputs
 
-| Output     | Description |
-|------------|-------------|
-| `response` | Raw JSON returned by the Clymist deploy endpoint. |
+| Output          | Description |
+|-----------------|-------------|
+| `response`      | Raw JSON returned by the Clymist deploy endpoint. |
+| `deployment-id` | The created deployment's id. |
+| `status`        | Final status: `running` (success), `failed`/`cancelled`, `timeout`, `skipped`, or `triggered` (when `wait: false`). |
 
 ## How it works
 

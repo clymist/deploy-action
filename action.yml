@@ -25,11 +25,25 @@ inputs:
     description: 'Git ref being deployed. Defaults to github.ref.'
     required: false
     default: ''
+  wait:
+    description: 'Wait for the deployment to finish and fail the step if it fails. Set to "false" to trigger-and-return.'
+    required: false
+    default: 'true'
+  timeout:
+    description: 'Max seconds to wait for the deployment to finish (when wait=true).'
+    required: false
+    default: '900'
 
 outputs:
   response:
     description: 'The raw JSON response from the Clymist deploy endpoint.'
     value: ${{ steps.deploy.outputs.response }}
+  deployment-id:
+    description: 'The created deployment id.'
+    value: ${{ steps.deploy.outputs.deployment-id }}
+  status:
+    description: 'Final deployment status (running=success, failed/cancelled, or "triggered" when wait=false).'
+    value: ${{ steps.deploy.outputs.status }}
 
 runs:
   using: 'composite'
@@ -42,59 +56,104 @@ runs:
         INPUT_AUDIENCE: ${{ inputs.audience }}
         INPUT_SHA: ${{ inputs.sha }}
         INPUT_REF: ${{ inputs.ref }}
+        INPUT_WAIT: ${{ inputs.wait }}
+        INPUT_TIMEOUT: ${{ inputs.timeout }}
         GH_SHA: ${{ github.sha }}
         GH_REF: ${{ github.ref }}
       run: |
         set -euo pipefail
+        out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
 
         if [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
           echo "::error::OIDC is not available. Add 'permissions: { id-token: write }' to the job." >&2
           exit 1
         fi
-
         if [ -z "${INPUT_APP_ID:-}" ]; then
           echo "::error::'app-id' is required. Set it to your Clymist app's UUID (see the app's Build settings)." >&2
           exit 1
         fi
 
         API_URL="${INPUT_API_URL%/}"
-        AUDIENCE="${INPUT_AUDIENCE}"
-        if [ -z "$AUDIENCE" ]; then
-          # Default audience = scheme://host of the API URL (drops the /api/v1 path).
-          AUDIENCE="$(printf '%s' "$API_URL" | sed -E 's#^(https?://[^/]+).*#\1#')"
-        fi
-
+        AUDIENCE="${INPUT_AUDIENCE:-}"
+        [ -z "$AUDIENCE" ] && AUDIENCE="$(printf '%s' "$API_URL" | sed -E 's#^(https?://[^/]+).*#\1#')"
         SHA="${INPUT_SHA:-$GH_SHA}"
         REF="${INPUT_REF:-$GH_REF}"
-
-        # Identifiable User-Agent so Clymist can attribute requests in its logs.
         UA="clymist-deploy-action (+https://github.com/clymist/deploy-action; repo=${GITHUB_REPOSITORY:-unknown}; run=${GITHUB_RUN_ID:-0})"
 
-        echo "Requesting OIDC token (audience=$AUDIENCE)…"
+        # ── Trigger ────────────────────────────────────────────────────────────
+        echo "::group::🚀 Triggering Clymist deploy"
+        echo "  app-id : $INPUT_APP_ID"
+        echo "  commit : $SHA"
+        echo "  ref    : $REF"
+        echo "  api    : $API_URL"
+
         TOKEN="$(curl -sSL -A "$UA" \
           -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
           "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -r '.value')"
         if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
-          echo "::error::Failed to obtain an OIDC token." >&2
-          exit 1
+          echo "::endgroup::"; echo "::error::Failed to obtain a GitHub OIDC token." >&2; exit 1
         fi
 
         BODY="$(jq -nc --arg appId "$INPUT_APP_ID" --arg sha "$SHA" --arg ref "$REF" \
           '{appId: $appId, sha: $sha, ref: $ref}')"
-
-        echo "Deploying to Clymist: $API_URL/deploy (app $INPUT_APP_ID)"
         RESPONSE="$(curl -sSL -A "$UA" -w '\n%{http_code}' -X POST "$API_URL/deploy" \
-          -H "Authorization: Bearer $TOKEN" \
-          -H "Content-Type: application/json" \
-          -d "$BODY")"
-
+          -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$BODY")"
         HTTP_CODE="$(printf '%s' "$RESPONSE" | tail -n1)"
         JSON="$(printf '%s' "$RESPONSE" | sed '$d')"
-        echo "response=$JSON" >> "$GITHUB_OUTPUT"
-        echo "$JSON"
+        out response "$JSON"
 
         if [ "$HTTP_CODE" -ge 400 ]; then
-          echo "::error::Clymist deploy failed (HTTP $HTTP_CODE): $JSON" >&2
-          exit 1
+          MSG="$(printf '%s' "$JSON" | jq -r '.message // .error // .' 2>/dev/null || echo "$JSON")"
+          echo "::endgroup::"; echo "::error::Deploy request rejected (HTTP $HTTP_CODE): $MSG" >&2; exit 1
         fi
-        echo "✅ Deploy triggered."
+
+        DEPLOY_ID="$(printf '%s' "$JSON" | jq -r '.deploymentId // empty')"
+        POLL_TOKEN="$(printf '%s' "$JSON" | jq -r '.pollToken // empty')"
+        DEPLOYED="$(printf '%s' "$JSON" | jq -r '(.deployed // []) | join(", ")')"
+        out deployment-id "$DEPLOY_ID"
+        echo "  ✅ triggered${DEPLOYED:+ → $DEPLOYED}${DEPLOY_ID:+ (deployment $DEPLOY_ID)}"
+        echo "::endgroup::"
+
+        # If nothing was deployed (e.g. app not in ci-action mode), surface it.
+        if [ -z "$DEPLOYED" ]; then
+          REASON="$(printf '%s' "$JSON" | jq -r '(.skipped // []) | map(.reason) | join("; ")')"
+          echo "::warning::No app was deployed. ${REASON:-The app may not be in ci-action mode.}"
+          out status "skipped"; exit 0
+        fi
+
+        # ── Wait for completion ──────────────────────────────────────────────
+        if [ "${INPUT_WAIT:-true}" != "true" ] || [ -z "$POLL_TOKEN" ]; then
+          out status "triggered"
+          [ "${INPUT_WAIT:-true}" = "true" ] && [ -z "$POLL_TOKEN" ] && \
+            echo "::warning::Server did not return a poll token; not waiting."
+          echo "Deploy triggered (not waiting)."; exit 0
+        fi
+
+        echo "::group::⏳ Waiting for deployment to finish"
+        DEADLINE=$(( $(date +%s) + ${INPUT_TIMEOUT:-900} ))
+        LAST=""
+        while :; do
+          S="$(curl -sSL -A "$UA" "$API_URL/deploy/status?token=${POLL_TOKEN}")"
+          STATUS="$(printf '%s' "$S" | jq -r '.status // "unknown"')"
+          DONE="$(printf '%s' "$S" | jq -r '.done // false')"
+          SUCCESS="$(printf '%s' "$S" | jq -r '.success // false')"
+          [ "$STATUS" != "$LAST" ] && { echo "  • $STATUS"; LAST="$STATUS"; }
+
+          if [ "$DONE" = "true" ]; then
+            out status "$STATUS"
+            echo "::endgroup::"
+            if [ "$SUCCESS" = "true" ]; then
+              echo "✅ Deployment succeeded (status: $STATUS)."
+              exit 0
+            fi
+            echo "::error::Deployment failed (status: $STATUS). See the Clymist deployment logs." >&2
+            exit 1
+          fi
+          if [ "$(date +%s)" -ge "$DEADLINE" ]; then
+            out status "timeout"
+            echo "::endgroup::"
+            echo "::error::Timed out after ${INPUT_TIMEOUT:-900}s waiting for the deploy (last status: $STATUS)." >&2
+            exit 1
+          fi
+          sleep 5
+        done
