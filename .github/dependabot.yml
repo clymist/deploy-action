@@ -1,0 +1,10 @@
+version: 2
+updates:
+  # Keep the actions we use in CI (checkout, gh-release, actionlint) current.
+  - package-ecosystem: 'github-actions'
+    directory: '/'
+    schedule:
+      interval: 'weekly'
+    labels: ['dependencies']
+    commit-message:
+      prefix: 'ci'

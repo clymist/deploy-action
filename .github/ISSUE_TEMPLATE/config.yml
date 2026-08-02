@@ -1,0 +1,8 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Clymist documentation
+    url: https://clymist.com/docs
+    about: Guides for auto-deploy, CI modes, and the deploy endpoint.
+  - name: Security report
+    url: https://github.com/clymist/deploy-action/security/advisories/new
+    about: Please report vulnerabilities privately, not as public issues.

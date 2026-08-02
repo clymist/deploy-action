@@ -1,6 +1,3 @@
-# Keeps the sliding major tag (e.g. v1) pointing at the latest vX.Y.Z release,
-# which is the tag users reference as `clymist/deploy-action@v1`.
-# Run this in the standalone clymist/deploy-action repo (not the monorepo).
 name: Release
 
 on:
@@ -12,15 +9,25 @@ permissions:
   contents: write
 
 jobs:
-  retag-major:
+  release:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - name: Move the major tag to this release
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+
+      # Keep the sliding major tag (e.g. v1) pointing at this release so users
+      # can pin `clymist/deploy-action@v1` and get patches automatically.
+      - name: Move the major tag
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"                 # e.g. v1.2.3
-          MAJOR="${TAG%%.*}"                        # e.g. v1
+          TAG="${GITHUB_REF_NAME}"          # e.g. v1.2.3
+          MAJOR="${TAG%%.*}"                 # e.g. v1
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -f "$MAJOR" "$TAG"

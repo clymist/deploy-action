@@ -1,0 +1,92 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lint:
+    name: Lint (actionlint + shellcheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: actionlint
+        uses: raven-actions/actionlint@v2
+        with:
+          # action.yml embeds a bash script in the composite `run:` step;
+          # actionlint runs shellcheck on it too.
+          shellcheck: true
+
+      - name: shellcheck standalone scripts
+        run: |
+          if ls scripts/*.sh >/dev/null 2>&1; then
+            shellcheck scripts/*.sh
+          else
+            echo "No standalone scripts to check."
+          fi
+
+  yaml:
+    name: Validate action.yml schema
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Check required action metadata
+        run: |
+          set -euo pipefail
+          for key in name description runs; do
+            grep -qE "^${key}:" action.yml || { echo "action.yml missing '${key}:'"; exit 1; }
+          done
+          grep -q "using: 'composite'" action.yml || { echo "action must be composite"; exit 1; }
+          echo "action.yml looks well-formed."
+
+  smoke:
+    name: Smoke test (mock endpoint)
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write # the action needs OIDC even in the smoke test
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      # A tiny local HTTP server standing in for the Clymist /deploy endpoint,
+      # so we exercise the action end-to-end without real infrastructure.
+      - name: Start mock deploy endpoint
+        run: |
+          cat > mock.py <<'PY'
+          from http.server import BaseHTTPRequestHandler, HTTPServer
+          import json
+          class H(BaseHTTPRequestHandler):
+              def do_POST(self):
+                  n = int(self.headers.get('Content-Length', 0))
+                  body = self.rfile.read(n)
+                  auth = self.headers.get('Authorization', '')
+                  ok = auth.startswith('Bearer ') and len(auth) > 20
+                  self.send_response(200 if ok else 401)
+                  self.send_header('Content-Type', 'application/json')
+                  self.end_headers()
+                  self.wfile.write(json.dumps({"ok": ok, "echo": body.decode()}).encode())
+              def log_message(self, *a): pass
+          HTTPServer(('127.0.0.1', 8099), H).serve_forever()
+          PY
+          python3 mock.py &
+          sleep 1
+
+      - name: Run the action against the mock
+        id: run
+        uses: ./
+        with:
+          app: smoke-test-app
+          api-url: http://127.0.0.1:8099/api/v1
+          audience: http://127.0.0.1:8099
+
+      - name: Assert response
+        run: |
+          echo "Response: ${{ steps.run.outputs.response }}"
+          echo '${{ steps.run.outputs.response }}' | grep -q '"ok": true' \
+            || { echo "smoke test did not get ok:true"; exit 1; }
