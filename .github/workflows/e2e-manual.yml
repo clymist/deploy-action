@@ -1,0 +1,37 @@
+# Manual end-to-end check against a REAL Clymist API. Never runs automatically —
+# trigger it from Actions → "E2E (manual)" once a Clymist app is connected to
+# this repo and set to ci-action mode. Expect success then; before the backend
+# is deployed / an app is wired it will 401/403, which still proves the action's
+# OIDC-mint + request path works.
+name: E2E (manual)
+
+on:
+  workflow_dispatch:
+    inputs:
+      app:
+        description: 'Clymist app name/subdomain to deploy'
+        required: true
+        type: string
+      api-url:
+        description: 'API base (defaults to production)'
+        required: false
+        default: 'https://api.clymist.com/api/v1'
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Deploy via the action (local ./)
+        id: deploy
+        uses: ./
+        with:
+          app: ${{ inputs.app }}
+          api-url: ${{ inputs.api-url }}
+      - name: Show response
+        run: echo "${{ steps.deploy.outputs.response }}"

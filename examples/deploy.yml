@@ -1,0 +1,30 @@
+# EXAMPLE — copy this into your OWN repo at .github/workflows/deploy.yml.
+#
+# This file lives under examples/ so it does NOT run as a workflow in this repo.
+# It shows the real usage: build/test, then deploy to Clymist via OIDC (no
+# stored secrets). Gate the deploy step with your own `if:` condition.
+name: Deploy to Clymist (example)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write # required for OIDC
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # --- your build / test steps go here ---
+      # - run: npm ci && npm test
+
+      - name: Deploy to Clymist
+        if: success() # only deploy when the steps above pass
+        uses: clymist/deploy-action@v0
+        with:
+          app: my-app # your Clymist app name or subdomain

@@ -1,0 +1,9 @@
+{
+  "name": "clymist-deploy-action-example",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Minimal sample app for demonstrating clymist/deploy-action.",
+  "scripts": {
+    "start": "node index.js"
+  }
+}
