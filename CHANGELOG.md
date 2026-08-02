@@ -6,7 +6,7 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
-## [1.0.0]
+## [0.1.0]
 
 ### Added
 
@@ -17,5 +17,8 @@ All notable changes to this action are documented here. The format follows
 - CI: actionlint + shellcheck + a mock-endpoint smoke test.
 - Release workflow: GitHub Release on `vX.Y.Z` tags + sliding major tag.
 
-[Unreleased]: https://github.com/clymist/deploy-action/compare/v1.0.0...HEAD
-[1.0.0]: https://github.com/clymist/deploy-action/releases/tag/v1.0.0
+> Pre-1.0: pin an exact version (`clymist/deploy-action@v0.1.0`). The sliding
+> major tag (`@v1`) becomes the recommended pin once 1.0.0 ships.
+
+[Unreleased]: https://github.com/clymist/deploy-action/compare/v0.1.0...HEAD
+[0.1.0]: https://github.com/clymist/deploy-action/releases/tag/v0.1.0
