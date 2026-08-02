@@ -32,9 +32,9 @@ jobs:
 
       - name: Deploy to Clymist
         if: success()                 # gate the deploy on your own condition
-        uses: clymist/deploy-action@v1
+        uses: clymist/deploy-action@v0
         with:
-          app: my-api                 # your Clymist app name/subdomain
+          app-id: ${{ vars.CLYMIST_APP_ID }}   # your Clymist app UUID (Build settings)
 ```
 
 The deploy step only runs when the steps before it succeed (`if: success()`).
@@ -46,13 +46,15 @@ whether the deployment should proceed.**
 
 | Input      | Required | Default                             | Description |
 |------------|----------|-------------------------------------|-------------|
-| `app`      | no*      | `''`                                | App name or subdomain. Optional when the repo maps to exactly one app. |
+| `app-id`   | **yes**  | —                                   | The Clymist app UUID to deploy (from the app's Build settings). Clymist only deploys it if this repository is the one connected to that app. |
 | `api-url`  | no       | `https://api.clymist.com/api/v1`    | Clymist API base URL (include the `/api/v1` prefix). |
 | `audience` | no       | API origin (scheme+host of `api-url`) | OIDC audience. Only override if your Clymist sets a custom `OIDC_AUDIENCE`. |
 | `sha`      | no       | `github.sha`                        | Commit SHA to deploy. |
 | `ref`      | no       | `github.ref`                        | Git ref being deployed. |
 
-\* Recommended even when optional, so it's unambiguous which app deploys.
+The `app-id` is not a secret — it's fine to hard-code or store as a repo variable.
+Authorization comes from the OIDC token: a workflow can only deploy an app whose
+connected repository matches the workflow's own repository.
 
 ## Outputs
 

@@ -8,8 +8,8 @@ name: E2E (manual)
 on:
   workflow_dispatch:
     inputs:
-      app:
-        description: 'Clymist app name/subdomain to deploy'
+      app-id:
+        description: 'Clymist app UUID to deploy'
         required: true
         type: string
       api-url:
@@ -31,7 +31,7 @@ jobs:
         id: deploy
         uses: ./
         with:
-          app: ${{ inputs.app }}
+          app-id: ${{ inputs.app-id }}
           api-url: ${{ inputs.api-url }}
       - name: Show response
         run: echo "${{ steps.deploy.outputs.response }}"

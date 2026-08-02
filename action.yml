@@ -6,10 +6,9 @@ branding:
   color: 'blue'
 
 inputs:
-  app:
-    description: 'Clymist app name/subdomain. Optional — leave empty and Clymist deploys the app connected to this repository. Only needed to disambiguate when one repo has multiple apps.'
-    required: false
-    default: ''
+  app-id:
+    description: 'The Clymist app UUID to deploy (from the app''s Build settings). Required. Clymist only deploys it if this repository is the one connected to that app.'
+    required: true
   api-url:
     description: 'Clymist API base URL (including the /api/v1 prefix).'
     required: false
@@ -38,7 +37,7 @@ runs:
     - id: deploy
       shell: bash
       env:
-        INPUT_APP: ${{ inputs.app }}
+        INPUT_APP_ID: ${{ inputs.app-id }}
         INPUT_API_URL: ${{ inputs.api-url }}
         INPUT_AUDIENCE: ${{ inputs.audience }}
         INPUT_SHA: ${{ inputs.sha }}
@@ -53,6 +52,11 @@ runs:
           exit 1
         fi
 
+        if [ -z "${INPUT_APP_ID:-}" ]; then
+          echo "::error::'app-id' is required. Set it to your Clymist app's UUID (see the app's Build settings)." >&2
+          exit 1
+        fi
+
         API_URL="${INPUT_API_URL%/}"
         AUDIENCE="${INPUT_AUDIENCE}"
         if [ -z "$AUDIENCE" ]; then
@@ -63,8 +67,11 @@ runs:
         SHA="${INPUT_SHA:-$GH_SHA}"
         REF="${INPUT_REF:-$GH_REF}"
 
+        # Identifiable User-Agent so Clymist can attribute requests in its logs.
+        UA="clymist-deploy-action (+https://github.com/clymist/deploy-action; repo=${GITHUB_REPOSITORY:-unknown}; run=${GITHUB_RUN_ID:-0})"
+
         echo "Requesting OIDC token (audience=$AUDIENCE)…"
-        TOKEN="$(curl -sSL \
+        TOKEN="$(curl -sSL -A "$UA" \
           -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
           "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -r '.value')"
         if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
@@ -72,11 +79,11 @@ runs:
           exit 1
         fi
 
-        BODY="$(jq -nc --arg app "$INPUT_APP" --arg sha "$SHA" --arg ref "$REF" \
-          '{app: $app, sha: $sha, ref: $ref}')"
+        BODY="$(jq -nc --arg appId "$INPUT_APP_ID" --arg sha "$SHA" --arg ref "$REF" \
+          '{appId: $appId, sha: $sha, ref: $ref}')"
 
-        echo "Deploying to Clymist: $API_URL/deploy"
-        RESPONSE="$(curl -sSL -w '\n%{http_code}' -X POST "$API_URL/deploy" \
+        echo "Deploying to Clymist: $API_URL/deploy (app $INPUT_APP_ID)"
+        RESPONSE="$(curl -sSL -A "$UA" -w '\n%{http_code}' -X POST "$API_URL/deploy" \
           -H "Authorization: Bearer $TOKEN" \
           -H "Content-Type: application/json" \
           -d "$BODY")"

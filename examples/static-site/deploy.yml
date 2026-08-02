@@ -25,6 +25,5 @@ jobs:
       - name: Deploy to Clymist
         if: success()
         uses: clymist/deploy-action@v0
-        # Optional: Clymist deploys the app connected to this repo by default.
-        # with:
-        #   app: my-static-site   # only needed if one repo has multiple apps
+        with:
+          app-id: 00000000-0000-0000-0000-000000000000 # your Clymist app UUID
