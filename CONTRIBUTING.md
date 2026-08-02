@@ -29,13 +29,25 @@ actionlint
 
 ## Versioning & releases
 
-We follow SemVer with a **sliding major tag**:
+We follow SemVer with a **sliding major tag**, and use
+[Conventional Commits](https://www.conventionalcommits.org/) to drive versions.
 
-- Cut a release by pushing a tag `vX.Y.Z`.
-- The release workflow creates the GitHub Release **and** force-moves the major
-  tag (`vX`) to it, so users pinning `clymist/deploy-action@v1` get patches.
-- **Breaking changes** (removing/renaming an input, changing a default) require
-  a **major** bump and a note in the PR's "Version impact".
+**Prereleases are automatic.** Every merge to `main` runs `prerelease.yml`,
+which computes the next version from the commits since the last stable tag
+(`feat:` → minor, `fix:`/`perf:` → patch, `!`/`BREAKING CHANGE` → major; while
+in `0.x`, breaking maps to minor) and publishes `v<next>-rc.<N>`. Prereleases are
+marked "Pre-release" on GitHub and **never** move the `vX` major tag. So `main`
+always has an installable rc for testing: `clymist/deploy-action@v0.2.0-rc.3`.
+
+**Stable releases are deliberate.** Cut one via **Actions → Release → Run
+workflow**, entering the version (e.g. `0.2.0`). That workflow creates the tag,
+the GitHub Release, and force-moves the major tag (`v0`/`v1`), so users pinning
+`clymist/deploy-action@v1` get it. (Pushing a `vX.Y.Z` tag directly also works.)
+
+- Write **Conventional Commit** subjects (`feat:`, `fix:`, `feat!:`, …) — the
+  prerelease version is derived from them.
+- **Breaking changes** (removing/renaming an input, changing a default) → use
+  `!` or a `BREAKING CHANGE:` footer, and note it in the PR's "Version impact".
 
 ## Reporting security issues
 

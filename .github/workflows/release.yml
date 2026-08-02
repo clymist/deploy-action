@@ -1,9 +1,27 @@
 name: Release
 
+# Two ways to cut a release:
+#  1. Actions → Release → "Run workflow", enter a version (e.g. 0.2.0, or a
+#     prerelease like 0.2.0-rc.1). The workflow creates the tag, the GitHub
+#     Release, and (for stable releases only) moves the major tag. No local
+#     `git tag`/push needed.
+#  2. Push a `vX.Y.Z` (or `vX.Y.Z-rc.N`) tag directly — still works.
 on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version, e.g. 0.2.0 or 0.2.0-rc.1 (no leading v)'
+        required: true
+        type: string
+      prerelease:
+        description: 'Mark as a pre-release (does not move the major tag)'
+        required: false
+        type: boolean
+        default: false
   push:
     tags:
       - 'v*.*.*'
+      - 'v*.*.*-*'
 
 permissions:
   contents: write
@@ -16,18 +34,60 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Resolve the tag + whether this is a prerelease, and create the tag when
+      # dispatched. A version containing a hyphen (e.g. -rc.1) is always treated
+      # as a prerelease, regardless of the checkbox.
+      - name: Resolve & create tag
+        id: tag
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            RAW="${{ inputs.version }}"
+            TAG="v${RAW#v}"                       # allow "0.2.0" or "v0.2.0"
+            if ! printf '%s' "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+              echo "::error::version must be X.Y.Z or X.Y.Z-suffix (got '$RAW')"; exit 1
+            fi
+            if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
+              echo "::error::tag $TAG already exists"; exit 1
+            fi
+            PRERELEASE="${{ inputs.prerelease }}"
+          else
+            TAG="${GITHUB_REF_NAME}"              # tag-push path
+            PRERELEASE=false
+          fi
+
+          # Any version with a pre-release suffix (a hyphen) is a prerelease.
+          case "$TAG" in *-*) PRERELEASE=true ;; esac
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            git config user.name "github-actions[bot]"
+            git config user.email "github-actions[bot]@users.noreply.github.com"
+            git tag -a "$TAG" -m "Release $TAG"
+            git push origin "$TAG"
+          fi
+
+          {
+            echo "tag=$TAG"
+            echo "major=${TAG%%.*}"
+            echo "prerelease=$PRERELEASE"
+          } >> "$GITHUB_OUTPUT"
+          echo "Releasing $TAG (prerelease=$PRERELEASE)"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.tag.outputs.tag }}
+          prerelease: ${{ steps.tag.outputs.prerelease }}
           generate_release_notes: true
 
-      # Keep the sliding major tag (e.g. v1) pointing at this release so users
-      # can pin `clymist/deploy-action@v1` and get patches automatically.
+      # Move the sliding major tag ONLY for stable releases, so `@v0`/`@v1` never
+      # point at a prerelease.
       - name: Move the major tag
+        if: steps.tag.outputs.prerelease != 'true'
         run: |
           set -euo pipefail
-          TAG="${GITHUB_REF_NAME}"          # e.g. v1.2.3
-          MAJOR="${TAG%%.*}"                 # e.g. v1
+          TAG="${{ steps.tag.outputs.tag }}"
+          MAJOR="${{ steps.tag.outputs.major }}"
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -f "$MAJOR" "$TAG"
