@@ -1,0 +1,93 @@
+name: 'Deploy to Clymist'
+description: 'Trigger a Clymist deployment from GitHub Actions using OIDC (no stored secrets).'
+author: 'Clymist'
+branding:
+  icon: 'upload-cloud'
+  color: 'blue'
+
+inputs:
+  app:
+    description: 'The Clymist app to deploy (its name or subdomain). Optional when the repo maps to a single app.'
+    required: false
+    default: ''
+  api-url:
+    description: 'Clymist API base URL (including the /api/v1 prefix).'
+    required: false
+    default: 'https://api.clymist.com/api/v1'
+  audience:
+    description: 'OIDC audience the token is minted for. Defaults to the API origin (scheme+host of api-url).'
+    required: false
+    default: ''
+  sha:
+    description: 'Commit SHA to deploy. Defaults to the triggering commit (github.sha).'
+    required: false
+    default: ''
+  ref:
+    description: 'Git ref being deployed. Defaults to github.ref.'
+    required: false
+    default: ''
+
+outputs:
+  response:
+    description: 'The raw JSON response from the Clymist deploy endpoint.'
+    value: ${{ steps.deploy.outputs.response }}
+
+runs:
+  using: 'composite'
+  steps:
+    - id: deploy
+      shell: bash
+      env:
+        INPUT_APP: ${{ inputs.app }}
+        INPUT_API_URL: ${{ inputs.api-url }}
+        INPUT_AUDIENCE: ${{ inputs.audience }}
+        INPUT_SHA: ${{ inputs.sha }}
+        INPUT_REF: ${{ inputs.ref }}
+        GH_SHA: ${{ github.sha }}
+        GH_REF: ${{ github.ref }}
+      run: |
+        set -euo pipefail
+
+        if [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
+          echo "::error::OIDC is not available. Add 'permissions: { id-token: write }' to the job." >&2
+          exit 1
+        fi
+
+        API_URL="${INPUT_API_URL%/}"
+        AUDIENCE="${INPUT_AUDIENCE}"
+        if [ -z "$AUDIENCE" ]; then
+          # Default audience = scheme://host of the API URL (drops the /api/v1 path).
+          AUDIENCE="$(printf '%s' "$API_URL" | sed -E 's#^(https?://[^/]+).*#\1#')"
+        fi
+
+        SHA="${INPUT_SHA:-$GH_SHA}"
+        REF="${INPUT_REF:-$GH_REF}"
+
+        echo "Requesting OIDC token (audience=$AUDIENCE)…"
+        TOKEN="$(curl -sSL \
+          -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -r '.value')"
+        if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+          echo "::error::Failed to obtain an OIDC token." >&2
+          exit 1
+        fi
+
+        BODY="$(jq -nc --arg app "$INPUT_APP" --arg sha "$SHA" --arg ref "$REF" \
+          '{app: $app, sha: $sha, ref: $ref}')"
+
+        echo "Deploying to Clymist: $API_URL/deploy"
+        RESPONSE="$(curl -sSL -w '\n%{http_code}' -X POST "$API_URL/deploy" \
+          -H "Authorization: Bearer $TOKEN" \
+          -H "Content-Type: application/json" \
+          -d "$BODY")"
+
+        HTTP_CODE="$(printf '%s' "$RESPONSE" | tail -n1)"
+        JSON="$(printf '%s' "$RESPONSE" | sed '$d')"
+        echo "response=$JSON" >> "$GITHUB_OUTPUT"
+        echo "$JSON"
+
+        if [ "$HTTP_CODE" -ge 400 ]; then
+          echo "::error::Clymist deploy failed (HTTP $HTTP_CODE): $JSON" >&2
+          exit 1
+        fi
+        echo "✅ Deploy triggered."
