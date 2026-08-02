@@ -7,7 +7,7 @@ branding:
 
 inputs:
   app:
-    description: 'The Clymist app to deploy (its name or subdomain). Optional when the repo maps to a single app.'
+    description: 'Clymist app name/subdomain. Optional — leave empty and Clymist deploys the app connected to this repository. Only needed to disambiguate when one repo has multiple apps.'
     required: false
     default: ''
   api-url:

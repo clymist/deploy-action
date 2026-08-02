@@ -26,5 +26,5 @@ jobs:
       - name: Deploy to Clymist
         if: success() # only deploy when the steps above pass
         uses: clymist/deploy-action@v0
-        with:
-          app: my-app # your Clymist app name or subdomain
+        # No inputs needed: Clymist deploys the app connected to this repo.
+        # Add `with: { app: my-app }` only if one repo has multiple apps.
