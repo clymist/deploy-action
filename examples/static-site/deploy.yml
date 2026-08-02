@@ -1,0 +1,29 @@
+# EXAMPLE — deploy a static HTML site to Clymist after CI.
+# Copy into your repo at .github/workflows/deploy.yml. Point the Clymist app's
+# root directory at this folder (or put index.html at the repo root). No build
+# step needed — Clymist serves static sites via nginx.
+name: Deploy static site to Clymist (example)
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # A static site has nothing to build, but you might lint/validate HTML:
+      # - run: npx --yes html-validate examples/static-site/index.html
+
+      - name: Deploy to Clymist
+        if: success()
+        uses: clymist/deploy-action@v0
+        with:
+          app: my-static-site

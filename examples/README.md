@@ -11,6 +11,13 @@ purpose so GitHub does **not** run it as a workflow in this repo.
 A minimal Node HTTP app (used as the thing a Clymist app would build & deploy).
 Nixpacks detects Node and runs `npm start`.
 
+## `static-site/`
+
+The simplest possible deploy target: a single `index.html`. Clymist detects a
+static site and serves it via nginx — no runtime, no build. `static-site/
+deploy.yml` shows the matching workflow. Great for a first end-to-end test of
+the action.
+
 ## Trying it for real
 
 1. In Clymist, connect an app to a GitHub repo and set **Build settings →
