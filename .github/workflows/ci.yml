@@ -14,7 +14,7 @@ jobs:
     name: Lint (actionlint + shellcheck)
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       - name: actionlint
         uses: raven-actions/actionlint@v2
@@ -35,7 +35,7 @@ jobs:
     name: Validate action.yml schema
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
       - name: Check required action metadata
         run: |
           set -euo pipefail
@@ -52,7 +52,7 @@ jobs:
       id-token: write # the action needs OIDC even in the smoke test
       contents: read
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # A tiny local HTTP server standing in for the Clymist /deploy endpoint,
       # so we exercise the action end-to-end without real infrastructure.
