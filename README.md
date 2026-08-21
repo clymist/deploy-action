@@ -7,7 +7,8 @@ that belongs to the **same repository**.
 
 > This is a self-contained composite action. It's developed in the Clymist
 > monorepo under `packages/deploy-action` and published to its own repository
-> (`clymist/deploy-action`) so users can reference it as `clymist/deploy-action@v1`.
+> (`clymist/deploy-action`) so users can reference it as `clymist/deploy-action@v0`
+> (the sliding tag for the latest stable 0.x; `@v1` once 1.0.0 ships).
 
 ## Usage
 
