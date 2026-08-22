@@ -56,23 +56,47 @@ jobs:
 
       # A tiny local HTTP server standing in for the Clymist /deploy endpoint,
       # so we exercise the action end-to-end without real infrastructure.
-      - name: Start mock deploy endpoint
+      # Two mocks on separate ports: 8099 deploys an app (happy path, including
+      # the status poll), 8098 deploys nothing (the skip path, which must FAIL).
+      - name: Start mock deploy endpoints
         run: |
           cat > mock.py <<'PY'
           from http.server import BaseHTTPRequestHandler, HTTPServer
-          import json
-          class H(BaseHTTPRequestHandler):
-              def do_POST(self):
-                  n = int(self.headers.get('Content-Length', 0))
-                  body = self.rfile.read(n)
-                  auth = self.headers.get('Authorization', '')
-                  ok = auth.startswith('Bearer ') and len(auth) > 20
-                  self.send_response(200 if ok else 401)
-                  self.send_header('Content-Type', 'application/json')
-                  self.end_headers()
-                  self.wfile.write(json.dumps({"ok": ok, "echo": body.decode()}).encode())
-              def log_message(self, *a): pass
-          HTTPServer(('127.0.0.1', 8099), H).serve_forever()
+          import json, sys, threading
+
+          def make(deployed):
+              class H(BaseHTTPRequestHandler):
+                  def do_POST(self):
+                      n = int(self.headers.get('Content-Length', 0))
+                      body = self.rfile.read(n)
+                      auth = self.headers.get('Authorization', '')
+                      ok = auth.startswith('Bearer ') and len(auth) > 20
+                      self.send_response(200 if ok else 401)
+                      self.send_header('Content-Type', 'application/json')
+                      self.end_headers()
+                      if deployed:
+                          out = {"ok": ok, "echo": body.decode(), "deployed": ["api"],
+                                 "deploymentId": "dep-1", "pollToken": "tok-1"}
+                      else:
+                          out = {"ok": ok, "echo": body.decode(), "deployed": [],
+                                 "skipped": [{"app": "api", "reason":
+                                              "\"api\" is in push mode. Switch it to CI action mode in "
+                                              "Settings -> Build & Deploy -> \"Deploy trigger\"."}]}
+                      self.wfile.write(json.dumps(out).encode())
+                  def do_GET(self):
+                      # /deploy/status?token=... — report a finished, successful deploy.
+                      self.send_response(200)
+                      self.send_header('Content-Type', 'application/json')
+                      self.end_headers()
+                      self.wfile.write(json.dumps(
+                          {"status": "running", "done": True, "success": True}).encode())
+                  def log_message(self, *a): pass
+              return H
+
+          for port, dep in ((8099, True), (8098, False)):
+              threading.Thread(target=HTTPServer(('127.0.0.1', port), make(dep)).serve_forever,
+                               daemon=True).start()
+          threading.Event().wait()
           PY
           python3 mock.py &
           sleep 1
@@ -90,3 +114,40 @@ jobs:
           echo "Response: ${{ steps.run.outputs.response }}"
           echo '${{ steps.run.outputs.response }}' | grep -q '"ok": true' \
             || { echo "smoke test did not get ok:true"; exit 1; }
+          [ "${{ steps.run.outputs.status }}" = "running" ] \
+            || { echo "expected a successful deploy status"; exit 1; }
+
+      # A deploy that deploys nothing must FAIL the step. continue-on-error lets
+      # the run proceed so we can assert the failure actually happened.
+      - name: Run against the deploys-nothing mock (must fail)
+        id: skiprun
+        continue-on-error: true
+        uses: ./
+        with:
+          app-id: 00000000-0000-0000-0000-000000000000
+          api-url: http://127.0.0.1:8098/api/v1
+          audience: http://127.0.0.1:8098
+
+      - name: Assert the skipped deploy failed the step
+        run: |
+          [ "${{ steps.skiprun.outcome }}" = "failure" ] \
+            || { echo "a deploy that deployed nothing did NOT fail the step"; exit 1; }
+          [ "${{ steps.skiprun.outputs.status }}" = "skipped" ] \
+            || { echo "expected status=skipped, got '${{ steps.skiprun.outputs.status }}'"; exit 1; }
+          echo "Skipped deploy correctly failed the step."
+
+      # ...and passes when the caller explicitly opts out.
+      - name: Run with fail-on-skip disabled (must pass)
+        id: skipok
+        uses: ./
+        with:
+          app-id: 00000000-0000-0000-0000-000000000000
+          api-url: http://127.0.0.1:8098/api/v1
+          audience: http://127.0.0.1:8098
+          fail-on-skip: 'false'
+
+      - name: Assert fail-on-skip=false passes
+        run: |
+          [ "${{ steps.skipok.outputs.status }}" = "skipped" ] \
+            || { echo "expected status=skipped"; exit 1; }
+          echo "fail-on-skip:false correctly warned instead of failing."

@@ -134,8 +134,10 @@ runs:
         # above a zero-deploy response is what made failures look like successes.
         if [ -n "$DEPLOYED" ]; then
           echo "  ✅ deploying → ${DEPLOYED}${DEPLOY_ID:+ (deployment $DEPLOY_ID)}"
-        else
+        elif [ "${INPUT_FAIL_ON_SKIP:-true}" = "true" ]; then
           echo "  ❌ deploy failed — nothing was deployed"
+        else
+          echo "  ⚠️  nothing was deployed (fail-on-skip is off)"
         fi
         echo "::endgroup::"
 
@@ -149,7 +151,11 @@ runs:
           out status "skipped"
           # The reason goes to the log verbatim (multi-line, readable). GitHub's
           # annotation UI shows only one line, so %0A-escape it for the annotation.
-          echo "Deploy failed — Clymist did not deploy this app:" >&2
+          if [ "${INPUT_FAIL_ON_SKIP:-true}" = "true" ]; then
+            echo "Deploy failed — Clymist did not deploy this app:" >&2
+          else
+            echo "Clymist did not deploy this app:" >&2
+          fi
           printf '%s\n' "$REASON" | sed 's/^/  /' >&2
           ANNOTATION="$(printf '%s' "$REASON" | awk 'BEGIN{ORS="%0A"}{print}')"
           if [ "${INPUT_FAIL_ON_SKIP:-true}" = "true" ]; then
