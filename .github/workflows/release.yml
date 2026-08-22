@@ -1,30 +1,38 @@
+# Cuts a STABLE release.
+#
+# Two entry points:
+#   1. workflow_dispatch — the normal path. Computes the next version from
+#      Conventional Commits, checks CHANGELOG.md documents it, tags, and
+#      publishes. Pass `version` to override the computed number.
+#   2. push of a vX.Y.Z tag — the escape hatch (and how tags pushed by hand
+#      still get a release). Skips straight to publishing.
+#
+# Either way the sliding major tag (v0, v1, …) is moved to the new release —
+# that's the tag users reference as `clymist/deploy-action@v0`.
 name: Release
 
-# Two ways to cut a release:
-#  1. Actions → Release → "Run workflow", enter a version (e.g. 0.2.0, or a
-#     prerelease like 0.2.0-rc.1). The workflow creates the tag, the GitHub
-#     Release, and (for stable releases only) moves the major tag. No local
-#     `git tag`/push needed.
-#  2. Push a `vX.Y.Z` (or `vX.Y.Z-rc.N`) tag directly — still works.
 on:
   workflow_dispatch:
     inputs:
       version:
-        description: 'Version, e.g. 0.2.0 or 0.2.0-rc.1 (no leading v)'
-        required: true
-        type: string
-      prerelease:
-        description: 'Mark as a pre-release (does not move the major tag)'
+        description: 'Version to release, e.g. 0.5.0. Leave blank to compute it from the commits since the last release.'
+        required: false
+        default: ''
+      dry-run:
+        description: 'Compute and validate only — do not tag or publish.'
         required: false
         type: boolean
         default: false
   push:
     tags:
       - 'v*.*.*'
-      - 'v*.*.*-*'
 
 permissions:
   contents: write
+
+concurrency:
+  group: release
+  cancel-in-progress: false
 
 jobs:
   release:
@@ -32,62 +40,118 @@ jobs:
     steps:
       - uses: actions/checkout@v7
         with:
-          fetch-depth: 0
+          fetch-depth: 0 # full history + tags: the version is derived from them
 
-      # Resolve the tag + whether this is a prerelease, and create the tag when
-      # dispatched. A version containing a hyphen (e.g. -rc.1) is always treated
-      # as a prerelease, regardless of the checkbox.
-      - name: Resolve & create tag
-        id: tag
+      # ── Resolve the version ────────────────────────────────────────────────
+      # On a tag push the version IS the tag. On dispatch, take the input or
+      # compute it from Conventional Commits.
+      - name: Resolve version
+        id: ver
+        env:
+          # Via env, never inlined into the script — a workflow input is
+          # attacker-controlled text and would otherwise be a shell injection.
+          INPUT_VERSION: ${{ inputs.version }}
         run: |
           set -euo pipefail
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            RAW="${{ inputs.version }}"
-            TAG="v${RAW#v}"                       # allow "0.2.0" or "v0.2.0"
-            if ! printf '%s' "$TAG" | grep -qE '^v[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
-              echo "::error::version must be X.Y.Z or X.Y.Z-suffix (got '$RAW')"; exit 1
-            fi
-            if git rev-parse -q --verify "refs/tags/$TAG" >/dev/null; then
-              echo "::error::tag $TAG already exists"; exit 1
-            fi
-            PRERELEASE="${{ inputs.prerelease }}"
+          if [ "${GITHUB_EVENT_NAME}" = "push" ]; then
+            VERSION="${GITHUB_REF_NAME#v}"
+            echo "Releasing from pushed tag: v${VERSION}"
+          elif [ -n "${INPUT_VERSION:-}" ]; then
+            VERSION="${INPUT_VERSION#v}"
+            echo "Releasing explicit version: v${VERSION}"
           else
-            TAG="${GITHUB_REF_NAME}"              # tag-push path
-            PRERELEASE=false
+            VERSION="$(./scripts/next-version.sh)"
+            echo "Computed next version: v${VERSION}"
           fi
 
-          # Any version with a pre-release suffix (a hyphen) is a prerelease.
-          case "$TAG" in *-*) PRERELEASE=true ;; esac
-
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            git config user.name "github-actions[bot]"
-            git config user.email "github-actions[bot]@users.noreply.github.com"
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
+          if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::'${VERSION}' is not a valid X.Y.Z version." >&2
+            exit 1
           fi
 
           {
-            echo "tag=$TAG"
-            echo "major=${TAG%%.*}"
-            echo "prerelease=$PRERELEASE"
+            echo "version=$VERSION"
+            echo "tag=v$VERSION"
+            echo "major=v${VERSION%%.*}"
           } >> "$GITHUB_OUTPUT"
-          echo "Releasing $TAG (prerelease=$PRERELEASE)"
 
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v3
-        with:
-          tag_name: ${{ steps.tag.outputs.tag }}
-          prerelease: ${{ steps.tag.outputs.prerelease }}
-          generate_release_notes: true
-
-      # Move the sliding major tag ONLY for stable releases, so `@v0`/`@v1` never
-      # point at a prerelease.
-      - name: Move the major tag
-        if: steps.tag.outputs.prerelease != 'true'
+      # ── Guards ─────────────────────────────────────────────────────────────
+      # Refuse to reuse a version, and refuse to ship one the changelog doesn't
+      # describe — the changelog is hand-written on purpose, so a missing entry
+      # means the release was not actually prepared.
+      - name: Check the tag is new
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${{ steps.tag.outputs.tag }}"
-          MAJOR="${{ steps.tag.outputs.major }}"
+          if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
+            echo "::error::${TAG} already exists. Bump the version or delete the tag." >&2
+            exit 1
+          fi
+          echo "${TAG} is available."
+
+      - name: Check CHANGELOG.md documents this version
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+        run: |
+          set -euo pipefail
+          if [ ! -f CHANGELOG.md ]; then
+            echo "::error::CHANGELOG.md is missing." >&2
+            exit 1
+          fi
+          if ! grep -qE "^## \[?${VERSION}\]?" CHANGELOG.md; then
+            echo "::error title=Changelog entry missing::CHANGELOG.md has no '## [${VERSION}]' section. Add the entry describing this release, then run again." >&2
+            exit 1
+          fi
+          echo "CHANGELOG.md documents ${VERSION}."
+
+      - name: Summarize
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          MAJOR: ${{ steps.ver.outputs.major }}
+          DRY_RUN: ${{ inputs.dry-run }}
+        run: |
+          {
+            echo "### Release ${TAG}"
+            echo ""
+            echo "- Sliding tag \`${MAJOR}\` will point here"
+            echo "- Users on \`clymist/deploy-action@${MAJOR}\` get this immediately"
+            [ "${DRY_RUN:-}" = "true" ] && echo "- **Dry run — nothing was tagged or published**"
+          } >> "$GITHUB_STEP_SUMMARY"
+          true  # the [ ] test above must not set the step's exit status
+
+      # ── Publish ────────────────────────────────────────────────────────────
+      - name: Tag the release
+        if: github.event_name == 'workflow_dispatch' && inputs.dry-run != true
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -a "$TAG" -m "Release $TAG"
+          git push origin "$TAG"
+
+      - name: Create the GitHub release
+        if: inputs.dry-run != true
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.ver.outputs.tag }}
+          name: ${{ steps.ver.outputs.tag }}
+          prerelease: false
+          make_latest: 'true'
+          generate_release_notes: true
+
+      # The sliding major tag is what `@v0` resolves to — move it last, so it
+      # only advances once the release itself exists.
+      - name: Move the sliding major tag
+        if: inputs.dry-run != true
+        env:
+          TAG: ${{ steps.ver.outputs.tag }}
+          MAJOR: ${{ steps.ver.outputs.major }}
+        run: |
+          set -euo pipefail
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git tag -f "$MAJOR" "$TAG"

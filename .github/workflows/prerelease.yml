@@ -30,59 +30,18 @@ jobs:
         with:
           fetch-depth: 0
 
+      # Shared with release.yml (scripts/next-version.sh) so an rc and the stable
+      # release it becomes always compute the same target version.
       - name: Compute next prerelease version
         id: ver
         run: |
           set -euo pipefail
-
-          # Latest STABLE tag (no hyphen). Default to v0.0.0 if none yet.
-          LAST_STABLE="$(git tag --list 'v[0-9]*.[0-9]*.[0-9]*' \
-            | grep -vE '\-' | sort -V | tail -n1 || true)"
-          LAST_STABLE="${LAST_STABLE:-v0.0.0}"
-          BASE="${LAST_STABLE#v}"
-          MAJOR="${BASE%%.*}"; REST="${BASE#*.}"; MINOR="${REST%%.*}"; PATCH="${REST#*.}"
-
-          # Inspect commits since the last stable tag to pick the bump. When no
-          # stable tag exists yet, scan the whole history.
-          if git rev-parse -q --verify "$LAST_STABLE" >/dev/null; then
-            LOG="$(git log --format='%B' "${LAST_STABLE}..HEAD")"
-          else
-            LOG="$(git log --format='%B')"
-          fi
-
-          BUMP="none"
-          if printf '%s' "$LOG" | grep -qE '(^|\n)(BREAKING CHANGE|.*!:)'; then
-            BUMP="major"
-          elif printf '%s' "$LOG" | grep -qE '(^|\n)feat(\(.+\))?:'; then
-            BUMP="minor"
-          elif printf '%s' "$LOG" | grep -qE '(^|\n)(fix|perf)(\(.+\))?:'; then
-            BUMP="patch"
-          fi
-          # Nothing releasable since last stable → default to a patch prerelease.
-          [ "$BUMP" = "none" ] && BUMP="patch"
-
-          # While in 0.x, a "major" (breaking) bump only moves the minor.
-          if [ "$MAJOR" -eq 0 ] && [ "$BUMP" = "major" ]; then BUMP="minor"; fi
-
-          case "$BUMP" in
-            major) MAJOR=$((MAJOR+1)); MINOR=0; PATCH=0 ;;
-            minor) MINOR=$((MINOR+1)); PATCH=0 ;;
-            patch) PATCH=$((PATCH+1)) ;;
-          esac
-          TARGET="${MAJOR}.${MINOR}.${PATCH}"
-
-          # rc counter: highest existing -rc.N for this TARGET, + 1.
-          LAST_RC="$(git tag --list "v${TARGET}-rc.*" \
-            | sed -E "s/^v${TARGET}-rc\.//" | sort -n | tail -n1 || true)"
-          NEXT_RC=$(( ${LAST_RC:-0} + 1 ))
-          TAG="v${TARGET}-rc.${NEXT_RC}"
-
+          TAG="$(./scripts/next-version.sh --rc)"
           {
             echo "tag=$TAG"
-            echo "target=$TARGET"
-            echo "bump=$BUMP"
+            echo "target=${TAG%-rc.*}"
           } >> "$GITHUB_OUTPUT"
-          echo "Next prerelease: $TAG (bump=$BUMP from $LAST_STABLE)"
+          echo "Next prerelease: $TAG"
 
       - name: Tag & publish prerelease
         env:

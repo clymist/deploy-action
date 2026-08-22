@@ -6,6 +6,13 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- Releases are cut from **Actions → Release → Run workflow**, which computes the
+  version from Conventional Commits, refuses to reuse a tag or to ship a version
+  `CHANGELOG.md` does not document, and supports a `dry-run`. Version logic now
+  lives in `scripts/next-version.sh`, shared with the prerelease workflow.
+
 ## [0.4.0]
 
 Deploys that never happened used to pass green. They now fail, and every reason

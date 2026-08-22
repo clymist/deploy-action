@@ -40,9 +40,23 @@ marked "Pre-release" on GitHub and **never** move the `vX` major tag. So `main`
 always has an installable rc for testing: `clymist/deploy-action@v0.2.0-rc.3`.
 
 **Stable releases are deliberate.** Cut one via **Actions → Release → Run
-workflow**, entering the version (e.g. `0.2.0`). That workflow creates the tag,
-the GitHub Release, and force-moves the major tag (`v0`/`v1`), so users pinning
-`clymist/deploy-action@v1` get it. (Pushing a `vX.Y.Z` tag directly also works.)
+workflow**. Leave `version` blank and it computes the next number from the
+commits since the last stable tag — the same rules, and the same shared script
+(`scripts/next-version.sh`), that `prerelease.yml` uses, so an rc and the stable
+release it becomes never disagree. Fill `version` in to override. The workflow
+then creates the tag, publishes the GitHub Release, and force-moves the major
+tag (`v0`/`v1`), so users pinning `clymist/deploy-action@v0` get it.
+(Pushing a `vX.Y.Z` tag directly still works and publishes the same way.)
+
+Two guards will stop a release rather than ship a half-prepared one:
+
+- **The tag must be new** — it refuses to reuse an existing version.
+- **`CHANGELOG.md` must have a `## [X.Y.Z]` section for the version.** The
+  changelog is hand-written on purpose; a missing entry means the release
+  wasn't prepared, so add the entry and run again.
+
+Use **`dry-run: true`** to see the computed version and run both guards without
+tagging or publishing anything.
 
 - Write **Conventional Commit** subjects (`feat:`, `fix:`, `feat!:`, …) — the
   prerelease version is derived from them.
