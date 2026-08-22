@@ -33,6 +33,10 @@ inputs:
     description: 'Wait for the deployment to finish and fail the step if it fails. Set to "false" to trigger-and-return.'
     required: false
     default: 'true'
+  fail-on-skip:
+    description: 'Fail the step when Clymist deploys nothing (e.g. the app is in push mode, or auto-deploy is off). Set to "false" to warn and pass instead.'
+    required: false
+    default: 'true'
   timeout:
     description: 'Max seconds to wait for the deployment to finish (when wait=true).'
     required: false
@@ -52,7 +56,10 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - id: deploy
+    # An explicit name — without it GitHub labels the step with the first line of
+    # the script ("Run set -euo pipefail"), which tells the user nothing.
+    - name: Deploy to Clymist
+      id: deploy
       shell: bash
       env:
         INPUT_APP_ID: ${{ inputs.app-id }}
@@ -63,6 +70,7 @@ runs:
         INPUT_REF: ${{ inputs.ref }}
         INPUT_WAIT: ${{ inputs.wait }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
+        INPUT_FAIL_ON_SKIP: ${{ inputs.fail-on-skip }}
         GH_SHA: ${{ github.sha }}
         GH_REF: ${{ github.ref }}
       run: |
@@ -84,6 +92,10 @@ runs:
         SHA="${INPUT_SHA:-$GH_SHA}"
         REF="${INPUT_REF:-$GH_REF}"
         UA="clymist-deploy-action (+https://github.com/clymist/deploy-action; repo=${GITHUB_REPOSITORY:-unknown}; run=${GITHUB_RUN_ID:-0})"
+        # Dashboard origin for deep links in the log: api.<host> → app.<host>.
+        DASHBOARD_URL="$(printf '%s' "$API_URL" \
+          | sed -E 's#^(https?://)api\.#\1app.#' \
+          | sed -E 's#^(https?://[^/]+).*#\1#')"
 
         # ── Trigger ────────────────────────────────────────────────────────────
         echo "::group::🚀 Triggering Clymist deploy"
@@ -118,14 +130,36 @@ runs:
         POLL_TOKEN="$(printf '%s' "$JSON" | jq -r '.pollToken // empty')"
         DEPLOYED="$(printf '%s' "$JSON" | jq -r '(.deployed // []) | join(", ")')"
         out deployment-id "$DEPLOY_ID"
-        echo "  ✅ triggered${DEPLOYED:+ → $DEPLOYED}${DEPLOY_ID:+ (deployment $DEPLOY_ID)}"
+        # Only claim success when an app was actually deployed — "✅ triggered"
+        # above a zero-deploy response is what made failures look like successes.
+        if [ -n "$DEPLOYED" ]; then
+          echo "  ✅ deploying → ${DEPLOYED}${DEPLOY_ID:+ (deployment $DEPLOY_ID)}"
+        else
+          echo "  ❌ deploy failed — nothing was deployed"
+        fi
         echo "::endgroup::"
 
-        # If nothing was deployed (e.g. app not in ci-action mode), surface it.
+        # Nothing was deployed. The HTTP call succeeded, but that is an internal
+        # detail — to the user this is simply a failed deploy, and it is almost
+        # always a misconfiguration they must fix. So FAIL by default rather than
+        # passing green on a deploy that never happened.
         if [ -z "$DEPLOYED" ]; then
-          REASON="$(printf '%s' "$JSON" | jq -r '(.skipped // []) | map(.reason) | join("; ")')"
-          echo "::warning::No app was deployed. ${REASON:-The app may not be in ci-action mode.}"
-          out status "skipped"; exit 0
+          REASON="$(printf '%s' "$JSON" | jq -r '(.skipped // []) | map(.reason) | join("\n")')"
+          [ -z "$REASON" ] && REASON="Clymist did not deploy this app and gave no reason. Check the app's Build & Deploy settings, then re-run."
+          out status "skipped"
+          # The reason goes to the log verbatim (multi-line, readable). GitHub's
+          # annotation UI shows only one line, so %0A-escape it for the annotation.
+          echo "Deploy failed — Clymist did not deploy this app:" >&2
+          printf '%s\n' "$REASON" | sed 's/^/  /' >&2
+          ANNOTATION="$(printf '%s' "$REASON" | awk 'BEGIN{ORS="%0A"}{print}')"
+          if [ "${INPUT_FAIL_ON_SKIP:-true}" = "true" ]; then
+            echo "" >&2
+            echo "No deployment was created, so this step failed. If not deploying is expected here, set fail-on-skip: false to warn instead." >&2
+            echo "::error title=Clymist deploy failed::${ANNOTATION}" >&2
+            exit 1
+          fi
+          echo "::warning title=Clymist deploy skipped::${ANNOTATION}"
+          exit 0
         fi
 
         # ── Wait for completion ──────────────────────────────────────────────
@@ -153,7 +187,10 @@ runs:
               echo "✅ Deployment succeeded (status: $STATUS)."
               exit 0
             fi
-            echo "::error::Deployment failed (status: $STATUS). See the Clymist deployment logs." >&2
+            ERR="$(printf '%s' "$S" | jq -r '.error // .message // empty')"
+            [ -n "$ERR" ] && echo "  reason: $ERR" >&2
+            echo "  logs  : ${DASHBOARD_URL}/applications/${INPUT_APP_ID}/deployments/${DEPLOY_ID}" >&2
+            echo "::error title=Clymist deployment failed::${ERR:-Deployment finished with status \"$STATUS\".} See the deployment logs in Clymist." >&2
             exit 1
           fi
           if [ "$(date +%s)" -ge "$DEADLINE" ]; then
