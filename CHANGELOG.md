@@ -6,6 +6,37 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.4.0]
+
+Deploys that never happened used to pass green. They now fail, and every reason
+says what to change and where.
+
+### Added
+
+- `fail-on-skip` input (default `true`): fail the step when Clymist deploys
+  nothing. Set it to `false` to keep the previous warn-and-pass behavior.
+- Deployment failures print the reason from the API plus a direct link to the
+  deployment's logs in the Clymist dashboard.
+
+### Changed
+
+- **BREAKING**: when Clymist deploys nothing — the app is in `push` mode,
+  auto-deploy is off, or the target environment is disabled — the step now
+  **fails** instead of exiting 0 with a warning. A workflow that relied on the
+  green exit must set `fail-on-skip: false`.
+- Skip reasons are now actionable sentences naming the app and the setting to
+  change, replacing raw field dumps like `ciMode=push`.
+- Deploying a branch the target environment does not track is now rejected by
+  the API, instead of silently shipping the wrong commit to that environment.
+  Tag and manual refs are unaffected.
+- The step is labelled "Deploy to Clymist" in the Actions UI — it previously
+  showed as `Run set -euo pipefail`.
+- The log no longer prints `✅ triggered` when nothing was deployed.
+
+### Fixed
+
+- README documents the `environment` input (shipped in 0.3.0 but undocumented).
+
 ## [0.3.0]
 
 First STABLE release, so the sliding `@v0` tag moves here — `@v0` previously
@@ -39,9 +70,10 @@ which is why `app-id` was reported as an invalid input.
 - Release workflow: GitHub Release on `vX.Y.Z` tags + sliding major tag.
 
 > Pre-1.0: `@v0` tracks the latest stable 0.x release. Pin an exact version
-> (`clymist/deploy-action@v0.3.0`) if you need the inputs frozen; `@v1` becomes
+> (`clymist/deploy-action@v0.4.0`) if you need the behavior frozen; `@v1` becomes
 > the recommended pin once 1.0.0 ships.
 
-[Unreleased]: https://github.com/clymist/deploy-action/compare/v0.3.0...HEAD
+[Unreleased]: https://github.com/clymist/deploy-action/compare/v0.4.0...HEAD
+[0.4.0]: https://github.com/clymist/deploy-action/releases/tag/v0.4.0
 [0.3.0]: https://github.com/clymist/deploy-action/releases/tag/v0.3.0
 [0.1.0]: https://github.com/clymist/deploy-action/releases/tag/v0.1.0
