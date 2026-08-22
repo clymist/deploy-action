@@ -7,8 +7,10 @@
 #   2. push of a vX.Y.Z tag — the escape hatch (and how tags pushed by hand
 #      still get a release). Skips straight to publishing.
 #
-# Either way the sliding major tag (v0, v1, …) is moved to the new release —
-# that's the tag users reference as `clymist/deploy-action@v0`.
+# A stable release moves the sliding major tag (v0, v1, …) — that's what users
+# reference as `clymist/deploy-action@v0`. A prerelease (any version with a
+# hyphen, e.g. 0.5.0-rc.1) publishes but NEVER moves it, so `@v0` only ever
+# resolves to stable.
 name: Release
 
 on:
@@ -26,6 +28,7 @@ on:
   push:
     tags:
       - 'v*.*.*'
+      - 'v*.*.*-*' # prerelease tags (e.g. v0.5.0-rc.1) publish, but never move vX
 
 permissions:
   contents: write
@@ -64,16 +67,25 @@ jobs:
             echo "Computed next version: v${VERSION}"
           fi
 
-          if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
-            echo "::error::'${VERSION}' is not a valid X.Y.Z version." >&2
+          if ! printf '%s' "$VERSION" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$'; then
+            echo "::error::'${VERSION}' is not a valid X.Y.Z (or X.Y.Z-rc.N) version." >&2
             exit 1
           fi
+
+          # A pre-release suffix (any hyphen) publishes a GitHub prerelease and
+          # must never move the sliding major tag — `@v0` only tracks stable.
+          case "$VERSION" in
+            *-*) PRERELEASE=true ;;
+            *)   PRERELEASE=false ;;
+          esac
 
           {
             echo "version=$VERSION"
             echo "tag=v$VERSION"
             echo "major=v${VERSION%%.*}"
+            echo "prerelease=$PRERELEASE"
           } >> "$GITHUB_OUTPUT"
+          echo "Releasing v${VERSION} (prerelease=${PRERELEASE})"
 
       # ── Guards ─────────────────────────────────────────────────────────────
       # Refuse to reuse a version, and refuse to ship one the changelog doesn't
@@ -91,7 +103,10 @@ jobs:
           fi
           echo "${TAG} is available."
 
+      # Stable releases only: an rc is a snapshot of in-progress work, so it is
+      # not expected to have its own changelog section yet.
       - name: Check CHANGELOG.md documents this version
+        if: steps.ver.outputs.prerelease != 'true'
         env:
           VERSION: ${{ steps.ver.outputs.version }}
         run: |
@@ -111,12 +126,18 @@ jobs:
           TAG: ${{ steps.ver.outputs.tag }}
           MAJOR: ${{ steps.ver.outputs.major }}
           DRY_RUN: ${{ inputs.dry-run }}
+          PRERELEASE: ${{ steps.ver.outputs.prerelease }}
         run: |
           {
             echo "### Release ${TAG}"
             echo ""
-            echo "- Sliding tag \`${MAJOR}\` will point here"
-            echo "- Users on \`clymist/deploy-action@${MAJOR}\` get this immediately"
+            if [ "${PRERELEASE}" = "true" ]; then
+              echo "- Marked **pre-release** — the \`${MAJOR}\` tag is NOT moved"
+              echo "- Install it explicitly: \`clymist/deploy-action@${TAG}\`"
+            else
+              echo "- Sliding tag \`${MAJOR}\` will point here"
+              echo "- Users on \`clymist/deploy-action@${MAJOR}\` get this immediately"
+            fi
             [ "${DRY_RUN:-}" = "true" ] && echo "- **Dry run — nothing was tagged or published**"
           } >> "$GITHUB_STEP_SUMMARY"
           true  # the [ ] test above must not set the step's exit status
@@ -139,14 +160,14 @@ jobs:
         with:
           tag_name: ${{ steps.ver.outputs.tag }}
           name: ${{ steps.ver.outputs.tag }}
-          prerelease: false
-          make_latest: 'true'
+          prerelease: ${{ steps.ver.outputs.prerelease }}
+          make_latest: ${{ steps.ver.outputs.prerelease != 'true' }}
           generate_release_notes: true
 
       # The sliding major tag is what `@v0` resolves to — move it last, so it
-      # only advances once the release itself exists.
+      # only advances once the release itself exists, and NEVER for a prerelease.
       - name: Move the sliding major tag
-        if: inputs.dry-run != true
+        if: inputs.dry-run != true && steps.ver.outputs.prerelease != 'true'
         env:
           TAG: ${{ steps.ver.outputs.tag }}
           MAJOR: ${{ steps.ver.outputs.major }}
