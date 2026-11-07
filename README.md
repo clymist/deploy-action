@@ -56,6 +56,7 @@ whether the deployment should proceed.**
 | `wait`         | no       | `true`                              | Wait for the deployment to finish and **fail the step if it fails**. Set `false` to trigger-and-return. |
 | `timeout`      | no       | `900`                               | Max seconds to wait (when `wait: true`). |
 | `fail-on-skip` | no       | `true`                              | Fail the step when Clymist deploys nothing. Set `false` to warn and pass instead. |
+| `build-args`   | no       | —                                   | Build arguments for this build only, one `NAME=VALUE` per line. Override the app's stored build args. Secret-looking names are refused — put secrets in the app's environment. |
 
 The `app-id` is not a secret — it's fine to hard-code or store as a repo variable.
 Authorization comes from the OIDC token: a workflow can only deploy an app whose
