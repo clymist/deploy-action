@@ -88,7 +88,9 @@ downgrade it to a warning.
 Clymist also **refuses** to deploy a branch that the target environment does not
 track — running this action on `main` against an environment that tracks
 `develop` fails rather than shipping the wrong commit. Tag and manual refs are
-exempt, so release workflows keep working.
+exempt, so release workflows keep working — except for an environment set to
+deploy on tags (e.g. `v*`): it accepts only a matching tag, and refuses branch
+workflows and other tags.
 
 ## How it works
 
