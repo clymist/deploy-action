@@ -6,6 +6,13 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- `build-args` input: per-build image build arguments, one `NAME=VALUE` per
+  line (only the first `=` splits, so values may contain commas, colons or `=`).
+  They override the app's stored build args for that build only. Secret-looking
+  names are refused, since build args are baked into the image and build logs.
+
 ### Changed
 
 - Releases are cut from **Actions → Release → Run workflow**, which computes the

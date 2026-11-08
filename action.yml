@@ -37,6 +37,27 @@ inputs:
     description: 'Fail the step when Clymist deploys nothing (e.g. the app is in push mode, or auto-deploy is off). Set to "false" to warn and pass instead.'
     required: false
     default: 'true'
+  build-args:
+    description: |
+      Optional build arguments for the image build, ONE PER LINE as NAME=VALUE:
+
+        build-args: |
+          NODE_VERSION=20
+          API_URL=https://api.example.com
+          CORS_ORIGINS=https://a.com,https://b.com
+
+      Newline-separated on purpose — only the first `=` splits, so a value may
+      contain commas, colons, spaces or further `=` signs with no escaping.
+      `#` comments and an `export ` prefix are ignored; wrap a value in quotes
+      to keep leading/trailing spaces.
+
+      These override the app's stored build args for THIS build only. Names must
+      match [A-Za-z_][A-Za-z0-9_]*. Secret-looking names (secret, token, passw,
+      api_key, credential, private_key) are REFUSED: build args are baked into
+      the image and echoed in build logs, so they are not a safe place for
+      secrets — put those in the app's environment instead.
+    required: false
+    default: ''
   timeout:
     description: 'Max seconds to wait for the deployment to finish (when wait=true).'
     required: false
@@ -71,6 +92,7 @@ runs:
         INPUT_WAIT: ${{ inputs.wait }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
         INPUT_FAIL_ON_SKIP: ${{ inputs.fail-on-skip }}
+        INPUT_BUILD_ARGS: ${{ inputs.build-args }}
         GH_SHA: ${{ github.sha }}
         GH_REF: ${{ github.ref }}
       run: |
@@ -113,8 +135,8 @@ runs:
         fi
 
         BODY="$(jq -nc --arg appId "$INPUT_APP_ID" --arg env "$INPUT_ENVIRONMENT" \
-          --arg sha "$SHA" --arg ref "$REF" \
-          '{appId: $appId, environment: $env, sha: $sha, ref: $ref}')"
+          --arg sha "$SHA" --arg ref "$REF" --arg buildArgs "${INPUT_BUILD_ARGS:-}" \
+          '{appId: $appId, environment: $env, sha: $sha, ref: $ref, buildArgs: $buildArgs}')"
         RESPONSE="$(curl -sSL -A "$UA" -w '\n%{http_code}' -X POST "$API_URL/deploy" \
           -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$BODY")"
         HTTP_CODE="$(printf '%s' "$RESPONSE" | tail -n1)"
