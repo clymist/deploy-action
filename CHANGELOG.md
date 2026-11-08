@@ -6,6 +6,11 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.5.0]
+
+Builds can take per-run arguments from the workflow, and tagged releases can
+deploy straight to environments that track tags.
+
 ### Added
 
 - `build-args` input: per-build image build arguments, one `NAME=VALUE` per
@@ -19,6 +24,10 @@ All notable changes to this action are documented here. The format follows
   version from Conventional Commits, refuses to reuse a tag or to ship a version
   `CHANGELOG.md` does not document, and supports a `dry-run`. Version logic now
   lives in `scripts/next-version.sh`, shared with the prerelease workflow.
+- Deploying from a tag workflow builds the tagged commit (Clymist used to try to
+  clone `refs/tags/<tag>` as a branch and fail). An environment with a tag
+  pattern (e.g. `v*`) only accepts a matching tag: a branch workflow or another
+  tag is refused.
 
 ## [0.4.0]
 
