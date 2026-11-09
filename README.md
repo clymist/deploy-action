@@ -45,15 +45,18 @@ whether the deployment should proceed.**
 
 ## Inputs
 
-| Input      | Required | Default                             | Description |
-|------------|----------|-------------------------------------|-------------|
-| `app-id`   | **yes**  | —                                   | The Clymist app UUID to deploy (from the app's Build settings). Clymist only deploys it if this repository is the one connected to that app. |
-| `api-url`  | no       | `https://api.clymist.com/api/v1`    | Clymist API base URL (include the `/api/v1` prefix). |
-| `audience` | no       | API origin (scheme+host of `api-url`) | OIDC audience. Only override if your Clymist sets a custom `OIDC_AUDIENCE`. |
-| `sha`      | no       | `github.sha`                        | Commit SHA to deploy. |
-| `ref`      | no       | `github.ref`                        | Git ref being deployed. |
-| `wait`     | no       | `true`                              | Wait for the deployment to finish and **fail the step if it fails**. Set `false` to trigger-and-return. |
-| `timeout`  | no       | `900`                               | Max seconds to wait (when `wait: true`). |
+| Input          | Required | Default                             | Description |
+|----------------|----------|-------------------------------------|-------------|
+| `app-id`       | **yes**  | —                                   | The Clymist app UUID to deploy (from the app's Build settings). Clymist only deploys it if this repository is the one connected to that app. |
+| `environment`  | no       | the app's primary environment       | Environment slug to deploy, e.g. `staging` or `production`. |
+| `api-url`      | no       | `https://api.clymist.com/api/v1`    | Clymist API base URL (include the `/api/v1` prefix). |
+| `audience`     | no       | API origin (scheme+host of `api-url`) | OIDC audience. Only override if your Clymist sets a custom `OIDC_AUDIENCE`. |
+| `sha`          | no       | `github.sha`                        | Commit SHA to deploy. |
+| `ref`          | no       | `github.ref`                        | Git ref being deployed. |
+| `wait`         | no       | `true`                              | Wait for the deployment to finish and **fail the step if it fails**. Set `false` to trigger-and-return. |
+| `timeout`      | no       | `900`                               | Max seconds to wait (when `wait: true`). |
+| `fail-on-skip` | no       | `true`                              | Fail the step when Clymist deploys nothing. Set `false` to warn and pass instead. |
+| `build-args`   | no       | —                                   | Build arguments for this build only, one `NAME=VALUE` per line. Override the app's stored build args. Secret-looking names are refused — put secrets in the app's environment. |
 
 The `app-id` is not a secret — it's fine to hard-code or store as a repo variable.
 Authorization comes from the OIDC token: a workflow can only deploy an app whose
@@ -114,6 +117,25 @@ jobs:
         with:
           app-id: ${{ vars.CLYMIST_APP_ID }}
 ```
+
+## When nothing gets deployed
+
+Clymist can accept the request and still deploy nothing — most often because the
+app is in **push** mode (so it deploys from Clymist's own push webhook and
+ignores this action), because auto-deploy is off, or because the target
+environment is disabled.
+
+That is a **failure**, not a success: the step exits non-zero and prints the
+reason Clymist returned, including where to change the setting. If a no-op
+deploy is legitimately expected in your workflow, set `fail-on-skip: false` to
+downgrade it to a warning.
+
+Clymist also **refuses** to deploy a branch that the target environment does not
+track — running this action on `main` against an environment that tracks
+`develop` fails rather than shipping the wrong commit. Tag and manual refs are
+exempt, so release workflows keep working — except for an environment set to
+deploy on tags (e.g. `v*`): it accepts only a matching tag, and refuses branch
+workflows and other tags.
 
 ## How it works
 

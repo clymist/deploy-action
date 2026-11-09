@@ -33,6 +33,31 @@ inputs:
     description: 'Wait for the deployment to finish and fail the step if it fails. Set to "false" to trigger-and-return.'
     required: false
     default: 'true'
+  fail-on-skip:
+    description: 'Fail the step when Clymist deploys nothing (e.g. the app is in push mode, or auto-deploy is off). Set to "false" to warn and pass instead.'
+    required: false
+    default: 'true'
+  build-args:
+    description: |
+      Optional build arguments for the image build, ONE PER LINE as NAME=VALUE:
+
+        build-args: |
+          NODE_VERSION=20
+          API_URL=https://api.example.com
+          CORS_ORIGINS=https://a.com,https://b.com
+
+      Newline-separated on purpose — only the first `=` splits, so a value may
+      contain commas, colons, spaces or further `=` signs with no escaping.
+      `#` comments and an `export ` prefix are ignored; wrap a value in quotes
+      to keep leading/trailing spaces.
+
+      These override the app's stored build args for THIS build only. Names must
+      match [A-Za-z_][A-Za-z0-9_]*. Secret-looking names (secret, token, passw,
+      api_key, credential, private_key) are REFUSED: build args are baked into
+      the image and echoed in build logs, so they are not a safe place for
+      secrets — put those in the app's environment instead.
+    required: false
+    default: ''
   timeout:
     description: 'Max seconds to wait for the deployment to finish (when wait=true).'
     required: false
@@ -61,7 +86,10 @@ outputs:
 runs:
   using: 'composite'
   steps:
-    - id: deploy
+    # An explicit name — without it GitHub labels the step with the first line of
+    # the script ("Run set -euo pipefail"), which tells the user nothing.
+    - name: Deploy to Clymist
+      id: deploy
       shell: bash
       env:
         INPUT_APP_ID: ${{ inputs.app-id }}
@@ -72,6 +100,8 @@ runs:
         INPUT_REF: ${{ inputs.ref }}
         INPUT_WAIT: ${{ inputs.wait }}
         INPUT_TIMEOUT: ${{ inputs.timeout }}
+        INPUT_FAIL_ON_SKIP: ${{ inputs.fail-on-skip }}
+        INPUT_BUILD_ARGS: ${{ inputs.build-args }}
         GH_SHA: ${{ github.sha }}
         GH_REF: ${{ github.ref }}
       run: |
@@ -98,6 +128,11 @@ runs:
         SHA="${INPUT_SHA:-$GH_SHA}"
         REF="${INPUT_REF:-$GH_REF}"
         UA="clymist-deploy-action (+https://github.com/clymist/deploy-action; repo=${GITHUB_REPOSITORY:-unknown}; run=${GITHUB_RUN_ID:-0})"
+        # Dashboard origin for a fallback link when the API doesn't send
+        # deploymentUrl: api.<host> → app.<host>.
+        DASHBOARD_URL="$(printf '%s' "$API_URL" \
+          | sed -E 's#^(https?://)api\.#\1app.#' \
+          | sed -E 's#^(https?://[^/]+).*#\1#')"
 
         # Seconds → "42s" or "3m 05s".
         dur() { local s=$1; if [ "$s" -ge 60 ]; then printf '%dm %02ds' $((s / 60)) $((s % 60)); else printf '%ds' "$s"; fi; }
@@ -129,7 +164,7 @@ runs:
           out deployment-url "$DASH"; out environment "$ENV_NAME"
           [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
           local icon="${2:-✅}"
-          case "$1" in triggered|skipped) icon="⏩" ;; esac
+          [ -z "${2:-}" ] && case "$1" in triggered|skipped) icon="⏩" ;; esac
           {
             echo "### $icon Clymist deploy: ${DEPLOYED:-$INPUT_APP_ID}"
             echo ""
@@ -163,8 +198,8 @@ runs:
         fi
 
         BODY="$(jq -nc --arg appId "$INPUT_APP_ID" --arg env "$INPUT_ENVIRONMENT" \
-          --arg sha "$SHA" --arg ref "$REF" \
-          '{appId: $appId, environment: $env, sha: $sha, ref: $ref}')"
+          --arg sha "$SHA" --arg ref "$REF" --arg buildArgs "${INPUT_BUILD_ARGS:-}" \
+          '{appId: $appId, environment: $env, sha: $sha, ref: $ref, buildArgs: $buildArgs}')"
         if ! RESPONSE="$(curl -sSL --max-time 60 -A "$UA" -w '\n%{http_code}' -X POST "$API_URL/deploy" \
           -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$BODY" 2>&1)"; then
           echo "::endgroup::"
@@ -192,14 +227,37 @@ runs:
         ENV_NAME="$(clean "$(j "$JSON" '.environment // empty | tostring')" 60)"
         URL="$(safe_url "$(j "$JSON" '.url // empty | tostring')")"
         DASH="$(safe_url "$(j "$JSON" '.deploymentUrl // empty | tostring')")"
+        [ -n "$DASH" ] || DASH="$(safe_url "${DASHBOARD_URL}/applications/${INPUT_APP_ID}?tab=deployments")"
         out deployment-id "$DEPLOY_ID"
         echo "  ✅ accepted${DEPLOY_ID:+ (deployment $DEPLOY_ID)}"
         echo "::endgroup::"
 
-        # If nothing was deployed (e.g. app not in ci-action mode), surface it.
+        # Nothing was deployed. The HTTP call succeeded, but to the user this is a
+        # failed deploy, almost always a misconfiguration to fix. So FAIL by
+        # default rather than passing green on a deploy that never happened.
         if [ -z "$DEPLOYED" ]; then
-          ERROR="$(clean "$(j "$JSON" 'if (.skipped | type) == "array" then .skipped | map(.reason // empty | tostring) | join("; ") else empty end')" 500)"
-          echo "::warning title=Clymist deploy skipped::${ERROR:-No app was deployed. The app may not be in ci-action mode.}"
+          # One reason per line (readable in the log); control characters
+          # stripped and capped like every other server value.
+          REASON="$(j "$JSON" 'if (.skipped | type) == "array" then .skipped | map(.reason // empty | tostring) | join("\n") else empty end' \
+            | tr -d '\000-\010\013-\037\177' | cut -c 1-500 | head -n 20)"
+          [ -n "$REASON" ] || REASON="Clymist did not deploy this app and gave no reason. Check the app's Build & Deploy settings, then re-run."
+          ERROR="$(clean "$REASON" 500)"
+          if [ "${INPUT_FAIL_ON_SKIP:-true}" = "true" ]; then
+            echo "Deploy failed — Clymist did not deploy this app:" >&2
+          else
+            echo "Clymist did not deploy this app:" >&2
+          fi
+          # Indented, so no reason line can start a workflow command.
+          printf '%s\n' "$REASON" | sed 's/^/  /' >&2
+          # The annotation shows one line; %0A keeps the reasons apart in it.
+          ANNOTATION="$(printf '%s' "$REASON" | awk 'BEGIN{ORS="%0A"}{print}')"
+          if [ "${INPUT_FAIL_ON_SKIP:-true}" = "true" ]; then
+            echo "" >&2
+            echo "No deployment was created, so this step failed. If not deploying is expected here, set fail-on-skip: false to warn instead." >&2
+            echo "::error title=Clymist deploy failed::${ANNOTATION}" >&2
+            finish skipped "❌"; exit 1
+          fi
+          echo "::warning title=Clymist deploy skipped::${ANNOTATION}"
           finish skipped; exit 0
         fi
 
