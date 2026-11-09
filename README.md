@@ -74,6 +74,8 @@ step red if the deployment fails — so your CI reflects the real deploy outcome
 | `environment`   | Name of the Clymist environment that was deployed. |
 
 Requires a Clymist API that returns these fields; with an older one they are empty.
+`url` is empty for apps without a public URL (Clymist **Worker** apps and
+internal services); the run then ends with `✅ Deployed in 42s (no public URL)`.
 
 ### What you see in the run
 

@@ -23,6 +23,12 @@ All notable changes to this action are documented here. The format follows
   link to the full logs, instead of only the status.
 - A failed status poll (network blip, API restart) is retried instead of
   failing the step; it gives up after six in a row.
+- Apps without a public URL (workers, internal services) end with
+  `✅ Deployed in 42s (no public URL)`; the `url` output is empty.
+- Responses from Clymist are treated as untrusted: URLs are used only if
+  well-formed, text is kept to one line and capped (no workflow-command
+  injection), a non-JSON or unreachable API gives a clear error, and outputs
+  use the multi-line delimiter form so an odd body can't corrupt them.
 
 ## [0.3.0]
 
