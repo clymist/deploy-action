@@ -8,7 +8,7 @@ name: Prerelease
 #   feat!/BREAKING   → major bump (or minor while still 0.x)
 # N increments per run within the same target version. It used to run on every
 # merge to main, which buried the real releases under -rc tags; stable releases
-# are cut via release.yml.
+# are cut by merging the release-please PR (release.yml).
 on:
   workflow_dispatch:
 
@@ -28,8 +28,8 @@ jobs:
         with:
           fetch-depth: 0
 
-      # Shared with release.yml (scripts/next-version.sh) so an rc and the stable
-      # release it becomes always compute the same target version.
+      # Same rules release-please uses for stable releases (scripts/next-version.sh),
+      # so an rc and the stable release it becomes compute the same version.
       - name: Compute next prerelease version
         id: ver
         run: |

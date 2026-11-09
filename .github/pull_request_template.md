@@ -22,4 +22,5 @@
 
 ## Version impact
 
-<!-- patch / minor / major — and a one-line changelog entry -->
+<!-- patch / minor / major. The changelog line comes from the commit messages
+     (or the PR title on a squash merge), so make those read well. -->

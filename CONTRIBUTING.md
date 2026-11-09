@@ -23,7 +23,8 @@ actionlint
 2. If you add/rename an **input** or **output**, update:
    - the `inputs:` / `outputs:` blocks in `action.yml`, and
    - the tables in `README.md` (CI does not enforce this — reviewers do).
-3. Add a line to `CHANGELOG.md` under `Unreleased`.
+3. Write a **Conventional Commit** message (see below). It becomes the
+   changelog line, so write it for users. Don't edit `CHANGELOG.md` by hand.
 4. The CI smoke test runs the action against a mock endpoint — make sure it
    still passes.
 
@@ -41,27 +42,42 @@ Prereleases are marked "Pre-release" on GitHub and **never** move the `vX` major
 tag. Delete an rc's release and tag once its stable release is out, so the tags
 list shows real releases.
 
-**Stable releases are deliberate.** Cut one via **Actions → Release → Run
-workflow**. Leave `version` blank and it computes the next number from the
-commits since the last stable tag — the same rules, and the same shared script
-(`scripts/next-version.sh`), that `prerelease.yml` uses, so an rc and the stable
-release it becomes never disagree. Fill `version` in to override. The workflow
-then creates the tag, publishes the GitHub Release, and force-moves the major
-tag (`v0`/`v1`), so users pinning `clymist/deploy-action@v0` get it.
-(Pushing a `vX.Y.Z` tag directly still works and publishes the same way.)
+**Stable releases come from commit messages** ([release-please](https://github.com/googleapis/release-please)).
+Every merge to `main` updates one open **"chore: release X.Y.Z"** PR with the next
+version and the `CHANGELOG.md` entry written from the commits since the last
+release. Merging that PR tags `vX.Y.Z`, publishes the GitHub Release and moves the
+major tag (`v0`/`v1`), so users pinning `clymist/deploy-action@v0` get it. There is
+nothing else to run.
 
-Two guards will stop a release rather than ship a half-prepared one:
+The version comes from the commit types (`feat:` → minor, `fix:`/`perf:` → patch,
+`!`/`BREAKING CHANGE` → major; while in `0.x`, breaking maps to minor). `docs:`
+lines are listed; `ci:`, `chore:`, `test:`, `build:` and `style:` commits ship
+with the next release without a line of their own.
 
-- **The tag must be new** — it refuses to reuse an existing version.
-- **`CHANGELOG.md` must have a `## [X.Y.Z]` section for the version.** The
-  changelog is hand-written on purpose; a missing entry means the release
-  wasn't prepared, so add the entry and run again.
+**Editing what the changelog says:**
 
-Use **`dry-run: true`** to see the computed version and run both guards without
-tagging or publishing anything.
+- **Before merging a change**, fix the commit message (or the PR title, if you
+  squash-merge: it becomes the commit message).
+- **After merging**, add this to the description of the merged PR; release-please
+  uses it instead of that PR's commit messages on its next run:
 
-- Write **Conventional Commit** subjects (`feat:`, `fix:`, `feat!:`, …) — the
-  prerelease version is derived from them.
+  ```
+  BEGIN_COMMIT_OVERRIDE
+  fix: retry a failed status poll instead of failing the step
+  END_COMMIT_OVERRIDE
+  ```
+- **At release time**, edit `CHANGELOG.md` in the release PR before merging it.
+  (Another merge to `main` regenerates the PR, so make that edit last.)
+
+### Commit messages
+
+`<type>[(scope)][!]: <description>`, for example `feat: add url output` or
+`fix(summary): escape pipes in the error row`. Types: `feat`, `fix`, `perf`,
+`refactor`, `docs`, `test`, `ci`, `build`, `chore`, `style`, `revert`. The
+**Commits** check fails a PR whose commits or title don't follow this; reword
+with `git rebase -i` and force-push. To catch it before pushing, enable the hook
+once per clone: `git config core.hooksPath .githooks`.
+
 - **Breaking changes** (removing/renaming an input, changing a default) → use
   `!` or a `BREAKING CHANGE:` footer, and note it in the PR's "Version impact".
 

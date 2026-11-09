@@ -5,8 +5,8 @@
 #   fix: / perf:     → patch bump
 #   feat!/BREAKING   → major bump (only moves the minor while still 0.x)
 #
-# Both prerelease.yml and release.yml source this, so an rc and the stable
-# release it becomes always agree on the number.
+# prerelease.yml uses this; it follows the same rules release-please uses for
+# stable releases (bump-minor-pre-major), so an rc names the release it previews.
 #
 # Usage:  scripts/next-version.sh [--rc]
 #   (no args)  → prints the stable target, e.g. "0.5.0"

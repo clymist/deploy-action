@@ -1,0 +1,4 @@
+#!/usr/bin/env bash
+# Rejects a commit whose message isn't a Conventional Commit, before CI does.
+# Enable once per clone:  git config core.hooksPath .githooks
+exec "$(git rev-parse --show-toplevel)/scripts/check-commits.sh" --file "$1"
