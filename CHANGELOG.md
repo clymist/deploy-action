@@ -8,9 +8,10 @@ All notable changes to this action are documented here. The format follows
 
 ### Added
 
-- Outputs `url`, `urls`, `deployment-url` and `environment`: where the app is
-  live (custom domain first) and its deployments in the Clymist dashboard. Use
-  `url` as a GitHub environment url for a **View deployment** button.
+- Outputs `url`, `deployment-url` and `environment`: where the app is live
+  (its custom domain if it has one, else its Clymist URL) and its deployments
+  in the Clymist dashboard. Use `url` as a GitHub environment url for a
+  **View deployment** button.
 - A job summary card with status, duration, environment, commit, URL and a
   link to the deployment in Clymist.
 

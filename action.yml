@@ -49,11 +49,8 @@ outputs:
     description: 'Final deployment status (running=success, failed/cancelled, or "triggered" when wait=false).'
     value: ${{ steps.deploy.outputs.status }}
   url:
-    description: 'Public URL of the deployed app: its oldest custom domain, else its Clymist URL. Use it as a GitHub environment url.'
+    description: 'Where the app is live: its custom domain if it has one, else its Clymist URL (one URL, not both). Use it as a GitHub environment url.'
     value: ${{ steps.deploy.outputs.url }}
-  urls:
-    description: 'Every public URL of the app, as a JSON array (url first).'
-    value: ${{ steps.deploy.outputs.urls }}
   deployment-url:
     description: 'Link to the app''s deployments in the Clymist dashboard.'
     value: ${{ steps.deploy.outputs.deployment-url }}
@@ -102,10 +99,10 @@ runs:
         # jq on a JSON string; empty instead of failing on a non-JSON body.
         j() { printf '%s' "$1" | jq -r "$2" 2>/dev/null || true; }
 
-        DEPLOYED=""; ENV_NAME=""; URL=""; URLS="[]"; DASH=""; ERROR=""; ELAPSED=""
+        DEPLOYED=""; ENV_NAME=""; URL=""; DASH=""; ERROR=""; ELAPSED=""
         # Step outputs + a job summary card, once, whatever the outcome.
         finish() {
-          out status "$1"; out url "$URL"; out urls "$URLS"
+          out status "$1"; out url "$URL"
           out deployment-url "$DASH"; out environment "$ENV_NAME"
           [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
           local icon="✅"
@@ -162,7 +159,6 @@ runs:
         DEPLOYED="$(j "$JSON" '(.deployed // []) | join(", ")')"
         ENV_NAME="$(j "$JSON" '.environment // empty')"
         URL="$(j "$JSON" '.url // empty')"
-        URLS="$(j "$JSON" '(.urls // []) | tojson')"; [ -n "$URLS" ] || URLS="[]"
         DASH="$(j "$JSON" '.deploymentUrl // empty')"
         out deployment-id "$DEPLOY_ID"
         echo "  ✅ accepted${DEPLOY_ID:+ (deployment $DEPLOY_ID)}"
@@ -219,7 +215,6 @@ runs:
             # The final status carries the links too (the deploy may have resolved
             # its environment only after it was accepted).
             V="$(j "$S" '.url // empty')"; [ -n "$V" ] && URL="$V"
-            V="$(j "$S" '(.urls // []) | tojson')"; [ -n "$V" ] && [ "$V" != "[]" ] && URLS="$V"
             V="$(j "$S" '.deploymentUrl // empty')"; [ -n "$V" ] && DASH="$V"
             V="$(j "$S" '.environment // empty')"; [ -n "$V" ] && ENV_NAME="$V"
             if [ "$SUCCESS" = "true" ]; then

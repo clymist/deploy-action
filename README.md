@@ -69,8 +69,7 @@ step red if the deployment fails — so your CI reflects the real deploy outcome
 | `response`      | Raw JSON returned by the Clymist deploy endpoint. |
 | `deployment-id` | The created deployment's id. |
 | `status`        | Final status: `running` (success), `failed`/`cancelled`, `timeout`, `skipped`, or `triggered` (when `wait: false`). |
-| `url`           | Public URL of the deployed app: its oldest custom domain, else its Clymist URL. |
-| `urls`          | Every public URL of the app, as a JSON array (`url` first). |
+| `url`           | Where the app is live: its custom domain if it has one, else its Clymist URL (one, not both). |
 | `deployment-url`| The app's deployments in the Clymist dashboard. |
 | `environment`   | Name of the Clymist environment that was deployed. |
 
