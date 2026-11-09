@@ -6,6 +6,11 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.6.0]
+
+The run says where the app is live and why a deploy failed, and it copes with
+apps that have no URL and with odd responses from Clymist.
+
 ### Added
 
 - Outputs `url`, `deployment-url` and `environment`: where the app is live
