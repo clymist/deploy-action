@@ -32,12 +32,14 @@ actionlint
 We follow SemVer with a **sliding major tag**, and use
 [Conventional Commits](https://www.conventionalcommits.org/) to drive versions.
 
-**Prereleases are automatic.** Every merge to `main` runs `prerelease.yml`,
-which computes the next version from the commits since the last stable tag
-(`feat:` → minor, `fix:`/`perf:` → patch, `!`/`BREAKING CHANGE` → major; while
-in `0.x`, breaking maps to minor) and publishes `v<next>-rc.<N>`. Prereleases are
-marked "Pre-release" on GitHub and **never** move the `vX` major tag. So `main`
-always has an installable rc for testing: `clymist/deploy-action@v0.2.0-rc.3`.
+**Prereleases are on demand.** To try a change before a stable release, run
+**Actions → Prerelease → Run workflow**. It computes the next version from the
+commits since the last stable tag (`feat:` → minor, `fix:`/`perf:` → patch,
+`!`/`BREAKING CHANGE` → major; while in `0.x`, breaking maps to minor) and
+publishes `v<next>-rc.<N>`, installable as e.g. `clymist/deploy-action@v0.7.0-rc.1`.
+Prereleases are marked "Pre-release" on GitHub and **never** move the `vX` major
+tag. Delete an rc's release and tag once its stable release is out, so the tags
+list shows real releases.
 
 **Stable releases are deliberate.** Cut one via **Actions → Release → Run
 workflow**. Leave `version` blank and it computes the next number from the

@@ -1,18 +1,18 @@
 name: Prerelease
 
-# Every merge to main publishes an automatic prerelease, versioned from
+# Publishes a prerelease (<next>-rc.<N>) on demand, from Actions → Prerelease →
+# Run workflow, for trying a change before a stable release. Versioned from
 # Conventional Commits since the last STABLE tag:
 #   feat:            → minor bump
 #   fix:/perf:       → patch bump
 #   feat!/BREAKING   → major bump (or minor while still 0.x)
-# The prerelease tag is <next>-rc.<N>, where N increments per merge within the
-# same target version. Stable releases are cut manually via release.yml.
+# N increments per run within the same target version. It used to run on every
+# merge to main, which buried the real releases under -rc tags; stable releases
+# are cut via release.yml.
 on:
-  push:
-    branches: [main]
   workflow_dispatch:
 
-# Don't stack prereleases if merges land quickly; the newest wins.
+# Don't stack prereleases if runs overlap; the newest wins.
 concurrency:
   group: prerelease
   cancel-in-progress: true
@@ -23,8 +23,6 @@ permissions:
 jobs:
   prerelease:
     runs-on: ubuntu-latest
-    # Skip release/version bookkeeping commits to avoid loops.
-    if: "!startsWith(github.event.head_commit.message, 'chore(release)')"
     steps:
       - uses: actions/checkout@v7
         with:

@@ -159,25 +159,54 @@ runs:
 
         DEPLOYED=""; ENV_NAME=""; URL=""; DASH=""; ERROR=""; ELAPSED=""
         # Step outputs + a job summary card, once, whatever the outcome.
+        PHASES=""  # "| phase | took |" rows for the summary, filled while waiting
+        # Step outputs + a job summary report, once, whatever the outcome.
         finish() {
           out status "$1"; out url "$URL"
           out deployment-url "$DASH"; out environment "$ENV_NAME"
           [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
-          local icon="${2:-✅}"
+          local icon="${2:-✅}" outcome
           [ -z "${2:-}" ] && case "$1" in triggered|skipped) icon="⏩" ;; esac
+          case "$1" in
+            running) outcome="Live" ;;
+            triggered) outcome="Triggered" ;;
+            skipped) outcome="Not deployed" ;;
+            rejected) outcome="Rejected" ;;
+            timeout) outcome="Timed out" ;;
+            error) outcome="Error" ;;
+            failed) outcome="Failed" ;;
+            cancelled) outcome="Cancelled" ;;
+            *) outcome="$1" ;;
+          esac
+          local commit="\`${SHA:0:7}\`"
+          [ -n "${GITHUB_REPOSITORY:-}" ] && \
+            commit="[\`${SHA:0:7}\`](${GITHUB_SERVER_URL:-https://github.com}/${GITHUB_REPOSITORY}/commit/${SHA})"
           {
-            echo "### $icon Clymist deploy: ${DEPLOYED:-$INPUT_APP_ID}"
+            echo "## $icon Clymist deployment · $outcome"
             echo ""
+            if [ -n "$ERROR" ]; then
+              if [ "$1" = skipped ] && [ "$icon" != "❌" ]; then echo "> [!WARNING]"; else echo "> [!CAUTION]"; fi
+              echo "> ${ERROR}"
+              echo ""
+            fi
             echo "| | |"
             echo "|---|---|"
-            echo "| Status | \`$1\`${ELAPSED:+ in $ELAPSED} |"
-            [ -n "$ENV_NAME" ] && echo "| Environment | ${ENV_NAME//|/\\|} |"
-            echo "| Commit | \`${SHA:0:7}\` |"
-            if [ -n "$URL" ]; then echo "| URL | $URL |"
-            elif [ "$1" = running ]; then echo "| URL | None (worker or internal service) |"; fi
-            [ -n "$ERROR" ] && echo "| $( [ "$1" = skipped ] && echo Reason || echo Error ) | ${ERROR//|/\\|} |"
-            [ -n "$DASH" ] && echo "| Clymist | [Deployment logs]($DASH) |"
+            echo "| **App** | ${DEPLOYED:-$INPUT_APP_ID} |"
+            [ -n "$ENV_NAME" ] && echo "| **Environment** | ${ENV_NAME//|/\\|} |"
+            echo "| **Commit** | $commit |"
+            [ -n "$ELAPSED" ] && echo "| **Duration** | $ELAPSED |"
+            if [ -n "$URL" ]; then echo "| **URL** | $URL |"
+            elif [ "$1" = running ]; then echo "| **URL** | None (worker or internal service) |"; fi
+            [ -n "$DASH" ] && echo "| **Logs** | [Open in Clymist]($DASH) |"
             echo ""
+            if [ -n "$PHASES" ]; then
+              echo "### Phases"
+              echo ""
+              echo "| Phase | Took |"
+              echo "|---|---|"
+              printf '%s' "$PHASES"
+              echo ""
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
         }
         fail() { echo "::error title=$1::$2" >&2; finish "${3:-error}" "❌"; exit 1; }
@@ -299,7 +328,10 @@ runs:
 
           if [ "$STATUS" != "$LAST" ]; then
             LINE="$(printf '  • %-10s +%s' "$STATUS" "$(dur $((NOW - START)))")"
-            [ -n "$LAST" ] && LINE="$LINE   ($LAST took $(dur $((NOW - PHASE_START))))"
+            if [ -n "$LAST" ]; then
+              LINE="$LINE   ($LAST took $(dur $((NOW - PHASE_START))))"
+              PHASES="${PHASES}| ${LAST} | $(dur $((NOW - PHASE_START))) |"$'\n'
+            fi
             echo "$LINE"
             LAST="$STATUS"; PHASE_START=$NOW
           fi
