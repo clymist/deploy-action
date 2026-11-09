@@ -69,6 +69,50 @@ step red if the deployment fails — so your CI reflects the real deploy outcome
 | `response`      | Raw JSON returned by the Clymist deploy endpoint. |
 | `deployment-id` | The created deployment's id. |
 | `status`        | Final status: `running` (success), `failed`/`cancelled`, `timeout`, `skipped`, or `triggered` (when `wait: false`). |
+| `url`           | Public URL of the deployed app: its oldest custom domain, else its Clymist URL. |
+| `urls`          | Every public URL of the app, as a JSON array (`url` first). |
+| `deployment-url`| The app's deployments in the Clymist dashboard. |
+| `environment`   | Name of the Clymist environment that was deployed. |
+
+Requires a Clymist API that returns these fields; with an older one they are empty.
+
+### What you see in the run
+
+The step log shows each phase with its time, then where the app is live:
+
+```
+🚀 Deploying Backend (production) · commit 64bc235
+   → https://api.example.com
+  • building   +0s
+  • deploying  +16s   (building took 16s)
+  • running    +42s   (deploying took 26s)
+✅ Live in 42s → https://api.example.com
+   Clymist: https://app.clymist.com/applications/<id>?tab=deployments
+```
+
+The run's summary page gets a card with the status, duration, environment,
+commit, URL and a link to the deployment in Clymist. A failed deploy shows
+Clymist's one-line reason (e.g. a failing pre-deploy command) in the error
+annotation; the full logs stay in Clymist.
+
+### Link the run to the deployed app
+
+Pass `url` to a GitHub environment, and GitHub shows a **View deployment**
+button on the run and on the pull request or commit:
+
+```yaml
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment:
+      name: production
+      url: ${{ steps.clymist.outputs.url }}
+    steps:
+      - id: clymist
+        uses: clymist/deploy-action@v0
+        with:
+          app-id: ${{ vars.CLYMIST_APP_ID }}
+```
 
 ## How it works
 

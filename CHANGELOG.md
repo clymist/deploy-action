@@ -6,6 +6,23 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Outputs `url`, `urls`, `deployment-url` and `environment`: where the app is
+  live (custom domain first) and its deployments in the Clymist dashboard. Use
+  `url` as a GitHub environment url for a **View deployment** button.
+- A job summary card with status, duration, environment, commit, URL and a
+  link to the deployment in Clymist.
+
+### Changed
+
+- Clearer logs: each phase shows its elapsed time and how long the previous
+  one took, and success ends with `✅ Live in 42s → <url>`.
+- A failed deploy's error annotation carries Clymist's one-line reason and a
+  link to the full logs, instead of only the status.
+- A failed status poll (network blip, API restart) is retried instead of
+  failing the step; it gives up after six in a row.
+
 ## [0.3.0]
 
 First STABLE release, so the sliding `@v0` tag moves here — `@v0` previously
