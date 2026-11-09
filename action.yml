@@ -73,6 +73,15 @@ outputs:
   status:
     description: 'Final deployment status (running=success, failed/cancelled, or "triggered" when wait=false).'
     value: ${{ steps.deploy.outputs.status }}
+  url:
+    description: 'Where the app is live: its custom domain if it has one, else its Clymist URL (one URL, not both). Use it as a GitHub environment url.'
+    value: ${{ steps.deploy.outputs.url }}
+  deployment-url:
+    description: 'Link to the app''s deployments in the Clymist dashboard.'
+    value: ${{ steps.deploy.outputs.deployment-url }}
+  environment:
+    description: 'Name of the Clymist environment that was deployed.'
+    value: ${{ steps.deploy.outputs.environment }}
 
 runs:
   using: 'composite'
@@ -97,7 +106,12 @@ runs:
         GH_REF: ${{ github.ref }}
       run: |
         set -euo pipefail
-        out() { echo "$1=$2" >> "$GITHUB_OUTPUT"; }
+        # Outputs use the multi-line delimiter form: a value with a newline (e.g.
+        # a pretty-printed response) would otherwise corrupt $GITHUB_OUTPUT.
+        out() {
+          local d="EOF_$RANDOM$RANDOM"
+          printf '%s<<%s\n%s\n%s\n' "$1" "$d" "$2" "$d" >> "$GITHUB_OUTPUT"
+        }
 
         if [ -z "${ACTIONS_ID_TOKEN_REQUEST_TOKEN:-}" ] || [ -z "${ACTIONS_ID_TOKEN_REQUEST_URL:-}" ]; then
           echo "::error::OIDC is not available. Add 'permissions: { id-token: write }' to the job." >&2
@@ -114,10 +128,59 @@ runs:
         SHA="${INPUT_SHA:-$GH_SHA}"
         REF="${INPUT_REF:-$GH_REF}"
         UA="clymist-deploy-action (+https://github.com/clymist/deploy-action; repo=${GITHUB_REPOSITORY:-unknown}; run=${GITHUB_RUN_ID:-0})"
-        # Dashboard origin for deep links in the log: api.<host> → app.<host>.
+        # Dashboard origin for a fallback link when the API doesn't send
+        # deploymentUrl: api.<host> → app.<host>.
         DASHBOARD_URL="$(printf '%s' "$API_URL" \
           | sed -E 's#^(https?://)api\.#\1app.#' \
           | sed -E 's#^(https?://[^/]+).*#\1#')"
+
+        # Seconds → "42s" or "3m 05s".
+        dur() { local s=$1; if [ "$s" -ge 60 ]; then printf '%dm %02ds' $((s / 60)) $((s % 60)); else printf '%ds' "$s"; fi; }
+        # jq on a JSON string; empty (never a failure) on a non-JSON body or a
+        # missing field.
+        j() { printf '%s' "$1" | jq -r "$2" 2>/dev/null || true; }
+        is_json() { printf '%s' "$1" | jq -e 'type == "object"' >/dev/null 2>&1; }
+
+        # Everything below that comes from the server is untrusted text: one line
+        # (a newline would let it start its own workflow command), no control
+        # characters, and capped in length.
+        clean() { printf '%s' "$1" | tr -d '\000-\010\013-\037\177' | tr '\n\r\t' '   ' | cut -c "1-${2:-300}"; }
+        # A URL is used only if it looks like one; anything else is dropped.
+        URL_WARNED=""
+        safe_url() {
+          local u; u="$(clean "$1" 2048)"
+          if [[ "$u" =~ ^https?://[A-Za-z0-9.-]+(:[0-9]+)?(/[^[:space:]\"\'\<\>]*)?$ ]]; then
+            printf '%s' "$u"
+          elif [ -n "$u" ] && [ -z "$URL_WARNED" ]; then
+            URL_WARNED=1
+            echo "::warning::Clymist returned a malformed URL; ignoring it." >&2
+          fi
+        }
+
+        DEPLOYED=""; ENV_NAME=""; URL=""; DASH=""; ERROR=""; ELAPSED=""
+        # Step outputs + a job summary card, once, whatever the outcome.
+        finish() {
+          out status "$1"; out url "$URL"
+          out deployment-url "$DASH"; out environment "$ENV_NAME"
+          [ -n "${GITHUB_STEP_SUMMARY:-}" ] || return 0
+          local icon="${2:-✅}"
+          [ -z "${2:-}" ] && case "$1" in triggered|skipped) icon="⏩" ;; esac
+          {
+            echo "### $icon Clymist deploy: ${DEPLOYED:-$INPUT_APP_ID}"
+            echo ""
+            echo "| | |"
+            echo "|---|---|"
+            echo "| Status | \`$1\`${ELAPSED:+ in $ELAPSED} |"
+            [ -n "$ENV_NAME" ] && echo "| Environment | ${ENV_NAME//|/\\|} |"
+            echo "| Commit | \`${SHA:0:7}\` |"
+            if [ -n "$URL" ]; then echo "| URL | $URL |"
+            elif [ "$1" = running ]; then echo "| URL | None (worker or internal service) |"; fi
+            [ -n "$ERROR" ] && echo "| $( [ "$1" = skipped ] && echo Reason || echo Error ) | ${ERROR//|/\\|} |"
+            [ -n "$DASH" ] && echo "| Clymist | [Deployment logs]($DASH) |"
+            echo ""
+          } >> "$GITHUB_STEP_SUMMARY"
+        }
+        fail() { echo "::error title=$1::$2" >&2; finish "${3:-error}" "❌"; exit 1; }
 
         # ── Trigger ────────────────────────────────────────────────────────────
         echo "::group::🚀 Triggering Clymist deploy"
@@ -127,105 +190,144 @@ runs:
         echo "  ref    : $REF"
         echo "  api    : $API_URL"
 
-        TOKEN="$(curl -sSL -A "$UA" \
+        TOKEN="$(curl -sSL --max-time 30 -A "$UA" \
           -H "Authorization: bearer $ACTIONS_ID_TOKEN_REQUEST_TOKEN" \
-          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" | jq -r '.value')"
-        if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+          "${ACTIONS_ID_TOKEN_REQUEST_URL}&audience=${AUDIENCE}" 2>/dev/null | jq -r '.value // empty' 2>/dev/null || true)"
+        if [ -z "$TOKEN" ]; then
           echo "::endgroup::"; echo "::error::Failed to obtain a GitHub OIDC token." >&2; exit 1
         fi
 
         BODY="$(jq -nc --arg appId "$INPUT_APP_ID" --arg env "$INPUT_ENVIRONMENT" \
           --arg sha "$SHA" --arg ref "$REF" --arg buildArgs "${INPUT_BUILD_ARGS:-}" \
           '{appId: $appId, environment: $env, sha: $sha, ref: $ref, buildArgs: $buildArgs}')"
-        RESPONSE="$(curl -sSL -A "$UA" -w '\n%{http_code}' -X POST "$API_URL/deploy" \
-          -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$BODY")"
+        if ! RESPONSE="$(curl -sSL --max-time 60 -A "$UA" -w '\n%{http_code}' -X POST "$API_URL/deploy" \
+          -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" -d "$BODY" 2>&1)"; then
+          echo "::endgroup::"
+          fail "Clymist unreachable" "Could not reach $API_URL/deploy: $(clean "$RESPONSE" 200)"
+        fi
         HTTP_CODE="$(printf '%s' "$RESPONSE" | tail -n1)"
         JSON="$(printf '%s' "$RESPONSE" | sed '$d')"
         out response "$JSON"
+        [[ "$HTTP_CODE" =~ ^[0-9]{3}$ ]] || HTTP_CODE=000
 
-        if [ "$HTTP_CODE" -ge 400 ]; then
-          MSG="$(printf '%s' "$JSON" | jq -r '.message // .error // .' 2>/dev/null || echo "$JSON")"
-          echo "::endgroup::"; echo "::error::Deploy request rejected (HTTP $HTTP_CODE): $MSG" >&2; exit 1
+        if [ "$HTTP_CODE" -lt 200 ] || [ "$HTTP_CODE" -ge 300 ]; then
+          ERROR="$(clean "$(j "$JSON" 'if type == "object" then (.message // .error // empty) | if type == "array" then join("; ") else tostring end else empty end')")"
+          [ -n "$ERROR" ] || ERROR="$(clean "$JSON" 200)"
+          echo "::endgroup::"
+          fail "Clymist deploy rejected (HTTP $HTTP_CODE)" "${ERROR:-No details returned.}" rejected
+        fi
+        if ! is_json "$JSON"; then
+          echo "::endgroup::"
+          fail "Unexpected response from Clymist" "The deploy endpoint answered HTTP $HTTP_CODE without a JSON object: $(clean "$JSON" 200)"
         fi
 
-        DEPLOY_ID="$(printf '%s' "$JSON" | jq -r '.deploymentId // empty')"
-        POLL_TOKEN="$(printf '%s' "$JSON" | jq -r '.pollToken // empty')"
-        DEPLOYED="$(printf '%s' "$JSON" | jq -r '(.deployed // []) | join(", ")')"
+        DEPLOY_ID="$(clean "$(j "$JSON" '.deploymentId // empty | tostring')" 64)"
+        POLL_TOKEN="$(clean "$(j "$JSON" '.pollToken // empty | tostring')" 512)"
+        DEPLOYED="$(clean "$(j "$JSON" 'if (.deployed | type) == "array" then .deployed | map(tostring) | join(", ") else empty end')" 120)"
+        ENV_NAME="$(clean "$(j "$JSON" '.environment // empty | tostring')" 60)"
+        URL="$(safe_url "$(j "$JSON" '.url // empty | tostring')")"
+        DASH="$(safe_url "$(j "$JSON" '.deploymentUrl // empty | tostring')")"
+        [ -n "$DASH" ] || DASH="$(safe_url "${DASHBOARD_URL}/applications/${INPUT_APP_ID}?tab=deployments")"
         out deployment-id "$DEPLOY_ID"
-        # Only claim success when an app was actually deployed — "✅ triggered"
-        # above a zero-deploy response is what made failures look like successes.
-        if [ -n "$DEPLOYED" ]; then
-          echo "  ✅ deploying → ${DEPLOYED}${DEPLOY_ID:+ (deployment $DEPLOY_ID)}"
-        elif [ "${INPUT_FAIL_ON_SKIP:-true}" = "true" ]; then
-          echo "  ❌ deploy failed — nothing was deployed"
-        else
-          echo "  ⚠️  nothing was deployed (fail-on-skip is off)"
-        fi
+        echo "  ✅ accepted${DEPLOY_ID:+ (deployment $DEPLOY_ID)}"
         echo "::endgroup::"
 
-        # Nothing was deployed. The HTTP call succeeded, but that is an internal
-        # detail — to the user this is simply a failed deploy, and it is almost
-        # always a misconfiguration they must fix. So FAIL by default rather than
-        # passing green on a deploy that never happened.
+        # Nothing was deployed. The HTTP call succeeded, but to the user this is a
+        # failed deploy, almost always a misconfiguration to fix. So FAIL by
+        # default rather than passing green on a deploy that never happened.
         if [ -z "$DEPLOYED" ]; then
-          REASON="$(printf '%s' "$JSON" | jq -r '(.skipped // []) | map(.reason) | join("\n")')"
-          [ -z "$REASON" ] && REASON="Clymist did not deploy this app and gave no reason. Check the app's Build & Deploy settings, then re-run."
-          out status "skipped"
-          # The reason goes to the log verbatim (multi-line, readable). GitHub's
-          # annotation UI shows only one line, so %0A-escape it for the annotation.
+          # One reason per line (readable in the log); control characters
+          # stripped and capped like every other server value.
+          REASON="$(j "$JSON" 'if (.skipped | type) == "array" then .skipped | map(.reason // empty | tostring) | join("\n") else empty end' \
+            | tr -d '\000-\010\013-\037\177' | cut -c 1-500 | head -n 20)"
+          [ -n "$REASON" ] || REASON="Clymist did not deploy this app and gave no reason. Check the app's Build & Deploy settings, then re-run."
+          ERROR="$(clean "$REASON" 500)"
           if [ "${INPUT_FAIL_ON_SKIP:-true}" = "true" ]; then
             echo "Deploy failed — Clymist did not deploy this app:" >&2
           else
             echo "Clymist did not deploy this app:" >&2
           fi
+          # Indented, so no reason line can start a workflow command.
           printf '%s\n' "$REASON" | sed 's/^/  /' >&2
+          # The annotation shows one line; %0A keeps the reasons apart in it.
           ANNOTATION="$(printf '%s' "$REASON" | awk 'BEGIN{ORS="%0A"}{print}')"
           if [ "${INPUT_FAIL_ON_SKIP:-true}" = "true" ]; then
             echo "" >&2
             echo "No deployment was created, so this step failed. If not deploying is expected here, set fail-on-skip: false to warn instead." >&2
             echo "::error title=Clymist deploy failed::${ANNOTATION}" >&2
-            exit 1
+            finish skipped "❌"; exit 1
           fi
           echo "::warning title=Clymist deploy skipped::${ANNOTATION}"
-          exit 0
+          finish skipped; exit 0
         fi
+
+        echo "🚀 Deploying ${DEPLOYED}${ENV_NAME:+ ($ENV_NAME)} · commit ${SHA:0:7}"
+        [ -n "$URL" ] && echo "   → $URL"
 
         # ── Wait for completion ──────────────────────────────────────────────
         if [ "${INPUT_WAIT:-true}" != "true" ] || [ -z "$POLL_TOKEN" ]; then
-          out status "triggered"
           [ "${INPUT_WAIT:-true}" = "true" ] && [ -z "$POLL_TOKEN" ] && \
             echo "::warning::Server did not return a poll token; not waiting."
-          echo "Deploy triggered (not waiting)."; exit 0
+          echo "Deploy triggered (not waiting).${DASH:+ Follow it in Clymist: $DASH}"
+          finish triggered; exit 0
         fi
 
-        echo "::group::⏳ Waiting for deployment to finish"
-        DEADLINE=$(( $(date +%s) + ${INPUT_TIMEOUT:-900} ))
-        LAST=""
+        START=$(date +%s)
+        DEADLINE=$(( START + ${INPUT_TIMEOUT:-900} ))
+        PHASE_START=$START
+        LAST=""; STATUS="unknown"; FAILS=0
         while :; do
-          S="$(curl -sSL -A "$UA" "$API_URL/deploy/status?token=${POLL_TOKEN}")"
-          STATUS="$(printf '%s' "$S" | jq -r '.status // "unknown"')"
-          DONE="$(printf '%s' "$S" | jq -r '.done // false')"
-          SUCCESS="$(printf '%s' "$S" | jq -r '.success // false')"
-          [ "$STATUS" != "$LAST" ] && { echo "  • $STATUS"; LAST="$STATUS"; }
+          # A failed or unreadable poll (network blip, API restart, an odd body)
+          # is retried, not fatal; six in a row give up.
+          S=""
+          if S="$(curl -sSfL --max-time 20 -A "$UA" --get --data-urlencode "token=${POLL_TOKEN}" \
+                "$API_URL/deploy/status" 2>/dev/null)" && is_json "$S" \
+              && [ -n "$(j "$S" '.status // empty | strings')" ]; then
+            FAILS=0
+          else
+            FAILS=$((FAILS + 1))
+            if [ "$FAILS" -ge 6 ]; then
+              ERROR="Lost contact with Clymist while waiting (last status: $STATUS)."
+              fail "Clymist deploy status unknown" "$ERROR${DASH:+ Check $DASH}" timeout
+            fi
+            sleep 5; continue
+          fi
+          NOW=$(date +%s)
+          STATUS="$(clean "$(j "$S" '.status')" 30)"
+          DONE="$(j "$S" '.done == true')"
+          SUCCESS="$(j "$S" '.success == true')"
+
+          if [ "$STATUS" != "$LAST" ]; then
+            LINE="$(printf '  • %-10s +%s' "$STATUS" "$(dur $((NOW - START)))")"
+            [ -n "$LAST" ] && LINE="$LINE   ($LAST took $(dur $((NOW - PHASE_START))))"
+            echo "$LINE"
+            LAST="$STATUS"; PHASE_START=$NOW
+          fi
 
           if [ "$DONE" = "true" ]; then
-            out status "$STATUS"
-            echo "::endgroup::"
+            ELAPSED="$(dur $((NOW - START)))"
+            # The final status carries the links too (the deploy may have resolved
+            # its environment only after it was accepted). A worker has none.
+            if [ "$(j "$S" 'has("url")')" = "true" ]; then URL="$(safe_url "$(j "$S" '.url // empty | tostring')")"; fi
+            V="$(safe_url "$(j "$S" '.deploymentUrl // empty | tostring')")"; [ -n "$V" ] && DASH="$V"
+            V="$(clean "$(j "$S" '.environment // empty | tostring')" 60)"; [ -n "$V" ] && ENV_NAME="$V"
             if [ "$SUCCESS" = "true" ]; then
-              echo "✅ Deployment succeeded (status: $STATUS)."
-              exit 0
+              if [ -n "$URL" ]; then
+                echo "✅ Live in ${ELAPSED} → $URL"
+                echo "::notice title=Deployed ${DEPLOYED}${ENV_NAME:+ ($ENV_NAME)}::$URL"
+              else
+                echo "✅ Deployed in ${ELAPSED} (no public URL)"
+              fi
+              [ -n "$DASH" ] && echo "   Clymist: $DASH"
+              finish "$STATUS"; exit 0
             fi
-            ERR="$(printf '%s' "$S" | jq -r '.error // .message // empty')"
-            [ -n "$ERR" ] && echo "  reason: $ERR" >&2
-            echo "  logs  : ${DASHBOARD_URL}/applications/${INPUT_APP_ID}/deployments/${DEPLOY_ID}" >&2
-            echo "::error title=Clymist deployment failed::${ERR:-Deployment finished with status \"$STATUS\".} See the deployment logs in Clymist." >&2
-            exit 1
+            ERROR="$(clean "$(j "$S" '.error // empty | tostring')" 300)"
+            fail "Clymist deploy ${STATUS} after ${ELAPSED}" "${ERROR:-Deployment $STATUS.}${DASH:+ Full logs: $DASH}" "$STATUS"
           fi
-          if [ "$(date +%s)" -ge "$DEADLINE" ]; then
-            out status "timeout"
-            echo "::endgroup::"
-            echo "::error::Timed out after ${INPUT_TIMEOUT:-900}s waiting for the deploy (last status: $STATUS)." >&2
-            exit 1
+          if [ "$NOW" -ge "$DEADLINE" ]; then
+            ELAPSED="$(dur $((NOW - START)))"
+            ERROR="Timed out after ${INPUT_TIMEOUT:-900}s waiting for the deploy (last status: $STATUS)."
+            fail "Clymist deploy timed out" "$ERROR${DASH:+ Check $DASH}" timeout
           fi
           sleep 5
         done

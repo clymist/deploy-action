@@ -6,6 +6,33 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
+### Added
+
+- Outputs `url`, `deployment-url` and `environment`: where the app is live
+  (its custom domain if it has one, else its Clymist URL) and its deployments
+  in the Clymist dashboard. Use `url` as a GitHub environment url for a
+  **View deployment** button.
+- A job summary card with status, duration, environment, commit, URL and a
+  link to the deployment in Clymist.
+
+### Changed
+
+- Clearer logs: each phase shows its elapsed time and how long the previous
+  one took, and success ends with `✅ Live in 42s → <url>`.
+- A failed deploy's error annotation carries Clymist's one-line reason and a
+  link to the full logs, instead of only the status.
+- A failed status poll (network blip, API restart) is retried instead of
+  failing the step; it gives up after six in a row.
+- Apps without a public URL (workers, internal services) end with
+  `✅ Deployed in 42s (no public URL)`; the `url` output is empty.
+- Responses from Clymist are treated as untrusted: URLs are used only if
+  well-formed, text is kept to one line and capped (no workflow-command
+  injection), a non-JSON or unreachable API gives a clear error, and outputs
+  use the multi-line delimiter form so an odd body can't corrupt them.
+- The "logs" link on a failed deploy opens the app's Deployments tab in
+  Clymist (from the API's `deploymentUrl` when it sends one). The previous
+  per-deployment path doesn't exist in the dashboard.
+
 ## [0.5.0]
 
 Builds can take per-run arguments from the workflow, and tagged releases can
