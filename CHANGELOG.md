@@ -6,6 +6,16 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
+### Changed
+
+- The job summary is a deployment report: the outcome in the title, app,
+  environment, a link to the commit, duration, URL and a link to Clymist, a
+  table of how long each phase took, and a callout with the reason when a
+  deploy fails or is skipped.
+- Prereleases are no longer published on every merge to `main`; run the
+  Prerelease workflow to make one. The old `-rc` tags were removed so the tags
+  list shows real releases.
+
 ## [0.6.0]
 
 The run says where the app is live and why a deploy failed, and it copes with
