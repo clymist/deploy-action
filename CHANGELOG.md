@@ -6,6 +6,11 @@ All notable changes to this action are documented here. The format follows
 
 ## [Unreleased]
 
+## [0.7.0]
+
+The run's Summary page gets a deployment report, and prereleases are made on
+demand instead of on every merge.
+
 ### Changed
 
 - The job summary is a deployment report: the outcome in the title, app,
