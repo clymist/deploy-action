@@ -1,0 +1,30 @@
+name: Commits
+
+# release-please builds the version and the changelog from commit messages, so a
+# message it can't read would silently leave a change out of a release. This
+# checks every commit in a PR, and the PR title (a squash merge uses it as the
+# commit message). Its own workflow so editing the title re-runs only this.
+on:
+  pull_request:
+    types: [opened, synchronize, reopened, edited]
+
+permissions:
+  contents: read
+
+jobs:
+  commits:
+    name: Conventional commits
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Check commit messages
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: scripts/check-commits.sh "$BASE_SHA" "$HEAD_SHA"
+      - name: Check the PR title
+        env:
+          PR_TITLE: ${{ github.event.pull_request.title }}
+        run: scripts/check-commits.sh --message "$PR_TITLE"

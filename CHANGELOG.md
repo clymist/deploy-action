@@ -1,10 +1,8 @@
 # Changelog
 
-All notable changes to this action are documented here. The format follows
-[Keep a Changelog](https://keepachangelog.com/), and this project adheres to
-[Semantic Versioning](https://semver.org/).
-
-## [Unreleased]
+All notable changes to this action are documented here, and this project
+adheres to [Semantic Versioning](https://semver.org/). From 0.8.0 on, entries are
+written by release-please from Conventional Commit messages; see CONTRIBUTING.md.
 
 ## [0.7.0]
 
